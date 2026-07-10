@@ -444,7 +444,7 @@
             <div class="header-controls">
                 <label class="toggle">
                     <input type="checkbox" id="internal-toggle">
-                    Show internal
+                    Show internal &amp; review
                 </label>
                 <button class="refresh-btn" onclick="fetchData()">Refresh</button>
             </div>
@@ -509,7 +509,7 @@
             const sessions = new Map();
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                if (!showInternal && deviceCol >= 0 && isFilteredDevice(row[deviceCol])) continue;
                 const sid = row[sessionCol];
                 const step = row[stepCol];
                 const ts = row[tsCol];
@@ -590,7 +590,7 @@
             const sessions = new Map();
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                if (!showInternal && deviceCol >= 0 && isFilteredDevice(row[deviceCol])) continue;
                 const sid = row[sessionCol];
                 const step = row[stepCol];
                 const ts = row[tsCol];
@@ -680,7 +680,7 @@
 
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
-                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                if (!showInternal && deviceCol >= 0 && isFilteredDevice(row[deviceCol])) continue;
 
                 const step = row[stepCol];
                 if (step) perStep[step] = (perStep[step] || 0) + 1;
@@ -707,7 +707,7 @@
                 const dev = rows[i][deviceCol];
                 const step = rows[i][stepCol];
                 if (!dev || !step) continue;
-                if (!showInternal && INTERNAL_DEVICES.has(dev)) continue;
+                if (!showInternal && isFilteredDevice(dev)) continue;
                 (stepDevices[step] = stepDevices[step] || new Set()).add(dev);
             }
             return stepDevices;
@@ -732,7 +732,7 @@
                 const dev = row[deviceCol];
                 const step = row[stepCol];
                 if (!dev || !step) continue;
-                if (!showInternal && INTERNAL_DEVICES.has(dev)) continue;
+                if (!showInternal && isFilteredDevice(dev)) continue;
                 const e = (out[step] = out[step] || { count: 0, devices: new Set(), devices7d: new Set() });
                 e.count++;
                 e.devices.add(dev);
@@ -826,6 +826,48 @@
             'DEPLOY-TEST-DEVICE'
         ]);
 
+        // Likely Apple App Review / beta-review infrastructure, recomputed
+        // from raw data on every render. Fingerprint (verified against the
+        // 2026-05→07 data): the device never saved a card, was active on a
+        // single calendar day, and its locale points at Apple's review farms
+        // (CN region, or Asia/Shanghai / America/Los_Angeles timezone).
+        // Deliberately NOT country-based alone: a real churned user in the
+        // actual audience (e.g. Toronto, one visit, no save) must keep
+        // counting in the funnel — drop-off measurement is the point.
+        let REVIEW_DEVICES = new Set();
+        function computeReviewDevices(rows, funnelRows) {
+            const saved = new Set();
+            if (rows && rows.length > 1) {
+                const dI = rows[0].indexOf('deviceId');
+                for (let i = 1; i < rows.length; i++) saved.add(rows[i][dI]);
+            }
+            const profile = {};
+            if (funnelRows && funnelRows.length > 1) {
+                const h = funnelRows[0];
+                const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'),
+                      cI = h.indexOf('country'), tzI = h.indexOf('timezone');
+                for (let i = 1; i < funnelRows.length; i++) {
+                    const r = funnelRows[i], id = r[dI];
+                    if (!id || saved.has(id)) continue;
+                    const p = profile[id] || (profile[id] = { days: new Set(), reviewLocale: false });
+                    if (tI >= 0 && r[tI]) p.days.add(String(r[tI]).slice(0, 10));
+                    const c = cI >= 0 ? r[cI] : '', tz = tzI >= 0 ? r[tzI] : '';
+                    if (c === 'CN' || tz === 'Asia/Shanghai' || tz === 'America/Los_Angeles') p.reviewLocale = true;
+                }
+            }
+            const set = new Set();
+            Object.entries(profile).forEach(([id, p]) => {
+                if (p.reviewLocale && p.days.size <= 1) set.add(id);
+            });
+            return set;
+        }
+
+        // Single predicate for every "hide this device?" check so internal
+        // and review filtering can never drift apart between sections.
+        function isFilteredDevice(id) {
+            return INTERNAL_DEVICES.has(id) || REVIEW_DEVICES.has(id);
+        }
+
         // Active dashboard tab, persisted across reloads.
         let activeTab = localStorage.getItem('dashTab') || 'overview';
         function switchTab(name) {
@@ -844,6 +886,7 @@
         let showInternal = localStorage.getItem('showInternal') === 'true';
 
         function renderDashboard(rows, funnelRows, funnelSummary) {
+            REVIEW_DEVICES = computeReviewDevices(rows, funnelRows);
             const headers = rows[0];
             const allData = rows.slice(1).map(row => {
                 const obj = {};
@@ -870,7 +913,7 @@
             // with a faded INTERNAL badge but the numbers reflect the full set.
             const visible = showInternal
                 ? allData
-                : allData.filter(d => !INTERNAL_DEVICES.has(d['deviceId']));
+                : allData.filter(d => !isFilteredDevice(d['deviceId']));
             const data = visible;
             const tableData = visible;
 
@@ -918,7 +961,7 @@
             const deviceInfo = {};
             const noteDevice = (id, model, country, tz) => {
                 if (!id) return;
-                if (!showInternal && INTERNAL_DEVICES.has(id)) return;
+                if (!showInternal && isFilteredDevice(id)) return;
                 const e = deviceInfo[id] || (deviceInfo[id] = {});
                 if (model && !e.model) e.model = model;
                 if (country && !e.country) e.country = country;
@@ -1458,8 +1501,11 @@
                 const c = r.capture;
                 const deviceId = (s && s.deviceId) || (c && c['deviceId']) || null;
                 const isInternal = deviceId && INTERNAL_DEVICES.has(deviceId);
-                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
-                const opacity = isInternal ? 'opacity:0.5;' : '';
+                const isReview = deviceId && REVIEW_DEVICES.has(deviceId);
+                const internalBadge = isInternal
+                    ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>'
+                    : (isReview ? ' <span class="badge" style="background:#2a201a;color:#ba9b6b">APP REVIEW</span>' : '');
+                const opacity = (isInternal || isReview) ? 'opacity:0.5;' : '';
                 const time = formatTime(new Date(r.sortTs));
 
                 let outcomeBadge;
@@ -1551,13 +1597,16 @@
                 // Device + model for header
                 const dId = cluster.deviceId;
                 const isInternal = dId && INTERNAL_DEVICES.has(dId);
+                const isReview = dId && REVIEW_DEVICES.has(dId);
                 const sampleSession = sessionRows[0] && sessionRows[0].session;
                 const sampleCapture = cRows.find(r => r.capture) && cRows.find(r => r.capture).capture;
                 const modelCode = (sampleSession && sampleSession.deviceModel)
                     || (sampleCapture && sampleCapture['deviceModel'])
                     || (dId ? deviceModels[dId] : null);
                 const modelLabel = modelCode ? deviceName(modelCode) : '—';
-                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
+                const internalBadge = isInternal
+                    ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>'
+                    : (isReview ? ' <span class="badge" style="background:#2a201a;color:#ba9b6b">APP REVIEW</span>' : '');
 
                 // Build the summary text
                 const newestTime = formatTime(new Date(newest.sortTs));
