@@ -821,7 +821,9 @@
 
         const INTERNAL_DEVICES = new Set([
             '103DF45F-718F-475C-A0AF-BC0D50CD4ECB',
-            '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3'
+            '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3',
+            '6F46307B-BD94-4DD7-9B1B-1E27306AB57A',
+            'DEPLOY-TEST-DEVICE'
         ]);
 
         // Active dashboard tab, persisted across reloads.
@@ -907,10 +909,36 @@
             // Show last 14 days max
             const recentDays = sortedDays.slice(-14);
 
-            // Device models
+            // Per-device profile — union of BOTH sheets. Capture rows only
+            // cover devices that saved a card; funnel rows also carry model /
+            // country / timezone for devices that installed or tried a scan
+            // but never saved. One entry per deviceId so a prolific tester
+            // counts once, and funnel rows get the internal filter that
+            // capture rows already had.
+            const deviceInfo = {};
+            const noteDevice = (id, model, country, tz) => {
+                if (!id) return;
+                if (!showInternal && INTERNAL_DEVICES.has(id)) return;
+                const e = deviceInfo[id] || (deviceInfo[id] = {});
+                if (model && !e.model) e.model = model;
+                if (country && !e.country) e.country = country;
+                if (tz && !e.tz) e.tz = tz;
+            };
+            data.forEach(d => noteDevice(d['deviceId'], d['deviceModel'], d['country'], d['timezone']));
+            if (funnelRows && funnelRows.length > 1) {
+                const fh = funnelRows[0];
+                const dI = fh.indexOf('deviceId'), mI = fh.indexOf('deviceModel'),
+                      cI = fh.indexOf('country'), tzI = fh.indexOf('timezone');
+                for (let i = 1; i < funnelRows.length; i++) {
+                    const r = funnelRows[i];
+                    noteDevice(r[dI], mI >= 0 ? r[mI] : null, cI >= 0 ? r[cI] : null, tzI >= 0 ? r[tzI] : null);
+                }
+            }
+
+            // Device models — one vote per device, not per capture
             const models = {};
-            data.forEach(d => {
-                const m = d['deviceModel'] || 'unknown';
+            Object.values(deviceInfo).forEach(e => {
+                const m = e.model || 'unknown';
                 models[m] = (models[m] || 0) + 1;
             });
 
@@ -1003,7 +1031,7 @@
 
             // Devices
             html += '<div class="chart-card">';
-            html += '<h3>Device Models</h3>';
+            html += '<h3>Device Models <span style="color:#555;font-weight:400;font-size:13px">· distinct devices</span></h3>';
             // Map internal model IDs to friendly names and merge duplicates
             const friendlyModels = {};
             Object.entries(models).forEach(([model, count]) => {
@@ -1025,21 +1053,20 @@
 
             // Locations — derived from device locale + timezone (no GPS,
             // no permission). Country = ISO region from iOS Settings,
-            // timezone = IANA identifier. Only renders if at least one row
-            // carries either field, so old data without location columns
-            // doesn't cause an empty card.
+            // timezone = IANA identifier. Counts DISTINCT DEVICES from the
+            // deviceInfo union above (captures + funnel), so devices that
+            // never saved a card still show up and heavy testers count once.
+            // Only renders if at least one device carries either field.
             const countries = {};
             const timezones = {};
-            data.forEach(d => {
-                const c = d['country'];
-                const tz = d['timezone'];
-                if (c) countries[c] = (countries[c] || 0) + 1;
-                if (tz) timezones[tz] = (timezones[tz] || 0) + 1;
+            Object.values(deviceInfo).forEach(e => {
+                if (e.country) countries[e.country] = (countries[e.country] || 0) + 1;
+                if (e.tz) timezones[e.tz] = (timezones[e.tz] || 0) + 1;
             });
             const hasLocation = Object.keys(countries).length || Object.keys(timezones).length;
             if (hasLocation) {
                 html += '<div class="chart-card">';
-                html += '<h3>Locations <span style="color:#555;font-weight:400;font-size:13px">· device locale + timezone</span></h3>';
+                html += '<h3>Locations <span style="color:#555;font-weight:400;font-size:13px">· distinct devices, by locale + timezone</span></h3>';
 
                 // Countries: friendly name + flag emoji
                 const sortedCountries = Object.entries(countries).sort((a, b) => b[1] - a[1]);
