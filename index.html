@@ -349,6 +349,32 @@
 
         .toggle input { accent-color: #ED9B61; cursor: pointer; }
 
+        /* --- Tabs -------------------------------------------------------
+           Overview (stats + funnels + charts) and the Capture Timeline live
+           on separate tabs — the timeline is a long forensic table that
+           buried the charts below it, especially on phones. */
+        .tab-bar {
+            max-width: 1200px;
+            margin: 0 auto 24px;
+            display: flex;
+            gap: 8px;
+        }
+        .tab-btn {
+            background: #191919;
+            border: 1px solid #222;
+            color: #888;
+            padding: 8px 18px;
+            border-radius: 99px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .tab-btn.active {
+            background: #ED9B61;
+            border-color: #ED9B61;
+            color: #161616;
+            font-weight: 600;
+        }
+
         /* --- Mobile (≤640px) -------------------------------------------
            The grids are already auto-fit, so phones mostly collapse to one
            column on their own. What breaks are the FIXED-width bar labels
@@ -372,6 +398,39 @@
             .donut-container { flex-direction: column; align-items: flex-start; gap: 16px; }
             /* Wide tables scroll inside their card rather than the page. */
             table { min-width: 560px; }
+
+            /* Capture Timeline: instead of a 10-column table squeezed onto a
+               phone, each row becomes a stacked CARD — label:value lines via
+               td data-labels. Cluster headers stay single summary lines. */
+            #tab-timeline table { min-width: 0; }
+            #tab-timeline thead { display: none; }
+            #tab-timeline table, #tab-timeline tbody,
+            #tab-timeline tr, #tab-timeline td { display: block; width: 100%; }
+            #tab-timeline tr {
+                border: 1px solid #222;
+                border-radius: 12px;
+                padding: 10px 12px;
+                margin-bottom: 10px;
+                background: #191919;
+            }
+            #tab-timeline td {
+                border: none;
+                padding: 3px 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                gap: 12px;
+                font-size: 13px;
+            }
+            #tab-timeline td::before {
+                content: attr(data-label);
+                color: #666;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                flex-shrink: 0;
+            }
+            #tab-timeline tr.cluster-header td { display: block; }
         }
     </style>
 </head>
@@ -765,6 +824,19 @@
             '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3'
         ]);
 
+        // Active dashboard tab, persisted across reloads.
+        let activeTab = localStorage.getItem('dashTab') || 'overview';
+        function switchTab(name) {
+            activeTab = name;
+            localStorage.setItem('dashTab', name);
+            const ov = document.getElementById('tab-overview');
+            const tl = document.getElementById('tab-timeline');
+            if (ov) ov.style.display = name === 'overview' ? '' : 'none';
+            if (tl) tl.style.display = name === 'timeline' ? '' : 'none';
+            document.querySelectorAll('.tab-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.tab === name));
+        }
+
         // "Show internal" toggle state, persisted so a reload respects the
         // previous choice. Read eagerly so the checkbox reflects it on init.
         let showInternal = localStorage.getItem('showInternal') === 'true';
@@ -901,7 +973,7 @@
                 const model = d['deviceModel'];
                 if (id && model) deviceModels[id] = model;
             });
-            html += renderTimeline(sessionsList, tableData, deviceModels);
+            const timelineHtml = renderTimeline(sessionsList, tableData, deviceModels);
 
             // Charts
             html += '<div class="charts-grid">';
@@ -1026,7 +1098,17 @@
             });
             html += '</div></div>';
 
-            document.getElementById('content').innerHTML = html;
+            // Two tabs: Overview (everything above) and the Capture
+            // Timeline (the long forensic table). Active tab persists.
+            const tabBar = `<div class="tab-bar">
+                <button class="tab-btn" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+                <button class="tab-btn" data-tab="timeline" onclick="switchTab('timeline')">Capture timeline</button>
+            </div>`;
+            document.getElementById('content').innerHTML =
+                tabBar
+                + `<div id="tab-overview">${html}</div>`
+                + `<div id="tab-timeline" style="display:none">${timelineHtml}</div>`;
+            switchTab(activeTab);
         }
 
         function formatTime(date) {
@@ -1397,16 +1479,16 @@
                 const styleAttr = style ? ` style="${style}"` : '';
 
                 return `<tr${cls}${styleAttr}>
-                    <td>${time}${internalBadge}</td>
-                    <td>${outcomeBadge}</td>
-                    <td>${lastLabel}</td>
-                    <td>${durationStr}</td>
-                    <td>${typeCell}</td>
-                    <td>${cat}</td>
-                    <td>${diecut}</td>
-                    <td>${from}</td>
-                    <td>${modelLabel}</td>
-                    <td>${version}</td>
+                    <td data-label="Time">${time}${internalBadge}</td>
+                    <td data-label="Outcome">${outcomeBadge}</td>
+                    <td data-label="Last step">${lastLabel}</td>
+                    <td data-label="Duration">${durationStr}</td>
+                    <td data-label="Type">${typeCell}</td>
+                    <td data-label="Category">${cat}</td>
+                    <td data-label="Die-cut">${diecut}</td>
+                    <td data-label="From">${from}</td>
+                    <td data-label="Model">${modelLabel}</td>
+                    <td data-label="Version">${version}</td>
                 </tr>`;
             }
 
@@ -1607,7 +1689,10 @@
             const rows = document.querySelectorAll('tr.cluster-row.' + clusterId);
             if (!rows.length) return;
             const isOpen = rows[0].style.display !== 'none';
-            rows.forEach(r => { r.style.display = isOpen ? 'none' : 'table-row'; });
+            // Empty string restores the STYLESHEET display (table-row on
+            // desktop, block card on the mobile layout) instead of forcing
+            // table-row, which broke the stacked mobile rows.
+            rows.forEach(r => { r.style.display = isOpen ? 'none' : ''; });
             const arrow = headerEl && headerEl.querySelector('.cluster-arrow');
             if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
         }
