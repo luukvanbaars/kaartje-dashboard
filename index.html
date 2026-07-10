@@ -1,0 +1,1629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CardKeep Dashboard</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            min-height: 100vh;
+            padding: 40px 24px;
+        }
+
+        .header {
+            max-width: 1200px;
+            margin: 0 auto 40px;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.5px;
+        }
+
+        .header h1 span { color: #ED9B61; }
+
+        .header p {
+            color: #888;
+            margin-top: 6px;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            margin: 0 auto 32px;
+        }
+
+        .stat-card {
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 24px;
+            transition: border-color 0.2s;
+        }
+
+        .stat-card:hover { border-color: #ED9B61; }
+
+        .stat-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .stat-sub {
+            font-size: 13px;
+            color: #555;
+            margin-top: 4px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            margin: 0 auto 32px;
+        }
+
+        .chart-card {
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 24px;
+        }
+
+        .chart-card h3 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        /* Bar chart */
+        .bar-chart { display: flex; flex-direction: column; gap: 10px; }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bar-label {
+            width: 90px;
+            font-size: 13px;
+            color: #aaa;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .bar-track {
+            flex: 1;
+            height: 28px;
+            background: #1a1a1a;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+            min-width: 2px;
+        }
+
+        .bar-count {
+            width: 36px;
+            font-size: 13px;
+            color: #666;
+            text-align: left;
+            flex-shrink: 0;
+        }
+
+        /* Donut chart */
+        .donut-container {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+        }
+
+        .donut-svg { flex-shrink: 0; }
+
+        .donut-legend { display: flex; flex-direction: column; gap: 8px; }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .legend-count {
+            color: #555;
+            margin-left: auto;
+            padding-left: 12px;
+        }
+
+        /* Timeline */
+        .timeline-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 120px;
+            padding-top: 8px;
+        }
+
+        .timeline-bar-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end;
+        }
+
+        .timeline-bar {
+            width: 100%;
+            max-width: 32px;
+            background: #ED9B61;
+            border-radius: 4px 4px 0 0;
+            transition: height 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            min-height: 2px;
+        }
+
+        .timeline-label {
+            font-size: 10px;
+            color: #555;
+            margin-top: 6px;
+            text-align: center;
+        }
+
+        /* Recent table */
+        .table-card {
+            background: #161616;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+            overflow-x: auto;
+        }
+
+        .table-card h3 {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 16px;
+            font-weight: 500;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #555;
+            padding: 8px 12px;
+            border-bottom: 1px solid #222;
+        }
+
+        td {
+            padding: 10px 12px;
+            font-size: 13px;
+            color: #aaa;
+            border-bottom: 1px solid #1a1a1a;
+        }
+
+        tr:hover td { color: #ddd; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-vertical { background: #1a2a1a; color: #6bba6b; }
+        .badge-horizontal { background: #1a1a2a; color: #6b8bba; }
+        .badge-postcard { background: #2a1a2a; color: #ba6bba; }
+        .badge-diecut { background: #2a2218; color: #ED9B61; }
+        .badge-saved { background: #1a2a1a; color: #6bba6b; }
+        .badge-abandoned { background: #2a1a1a; color: #ba6b6b; }
+
+        /* Burst-cluster rows: collapsed groups of rapid-fire sessions
+           from the same device. Click the header to expand. */
+        tr.cluster-header { cursor: pointer; }
+        tr.cluster-header td {
+            background: #131313;
+            color: #888;
+            font-size: 12px;
+            padding: 10px 12px;
+        }
+        tr.cluster-header:hover td { background: #181818; color: #ccc; }
+        tr.cluster-header .cluster-arrow {
+            display: inline-block;
+            width: 14px;
+            color: #555;
+            transition: transform 0.15s;
+        }
+        tr.cluster-row td {
+            background: #0d0d0d;
+            border-left: 2px solid #2a2a2a;
+        }
+        tr.cluster-row td:first-child { padding-left: 24px; }
+
+        .loading {
+            text-align: center;
+            padding: 80px 0;
+            color: #555;
+            font-size: 15px;
+        }
+
+        .loading::after {
+            content: '';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        .refresh-btn {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #888;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            border-color: #ED9B61;
+            color: #ED9B61;
+        }
+
+        .header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Small pill-style checkbox for the "Show internal" toggle. */
+        .toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #888;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+        }
+
+        .toggle:hover { border-color: #ED9B61; color: #ED9B61; }
+
+        .toggle input { accent-color: #ED9B61; cursor: pointer; }
+
+        /* --- Mobile (≤640px) -------------------------------------------
+           The grids are already auto-fit, so phones mostly collapse to one
+           column on their own. What breaks are the FIXED-width bar labels
+           and counts (funnel rows overflow a 390px screen) and side-by-side
+           donuts — stack those instead. The sessions table keeps its width
+           and scrolls inside .table-card (overflow-x is already set). */
+        @media (max-width: 640px) {
+            body { padding: 20px 12px; }
+            .header h1 { font-size: 24px; }
+            .header-row { flex-wrap: wrap; gap: 12px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .chart-card { padding: 16px; }
+            .table-card { padding: 16px; }
+            /* Bar rows: label moves ABOVE its bar (full row), the count
+               stays beside the track. JS emits inline widths on some
+               labels/counts, hence the !important overrides. */
+            .bar-row { flex-wrap: wrap; row-gap: 4px; }
+            .bar-label { width: 100% !important; text-align: left; }
+            .bar-track { flex: 1 1 auto; }
+            .bar-count { width: auto !important; white-space: nowrap; }
+            .donut-container { flex-direction: column; align-items: flex-start; gap: 16px; }
+            /* Wide tables scroll inside their card rather than the page. */
+            table { min-width: 560px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-row">
+            <div>
+                <h1>Kaart<span>je</span> Dashboard</h1>
+                <p id="subtitle">Loading...</p>
+            </div>
+            <div class="header-controls">
+                <label class="toggle">
+                    <input type="checkbox" id="internal-toggle">
+                    Show internal
+                </label>
+                <button class="refresh-btn" onclick="fetchData()">Refresh</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="content">
+        <div class="loading">Loading data</div>
+    </div>
+
+    <script>
+        const ENDPOINT = 'https://script.google.com/macros/s/AKfycbxB7YD_JPm1_iKDFXAMKojC8M_MCFqmzO0kVn8RIB0EOvXG4j5mTbev5FurUTb6L3hW9A/exec';
+
+        // Cached response so toggling "Show internal" re-renders without a
+        // second network round-trip.
+        let cachedRows = null;
+        let cachedFunnelRows = null;
+        let cachedFunnelSummary = null;
+
+        async function fetchData() {
+            try {
+                const res = await fetch(ENDPOINT);
+                const json = await res.json();
+                // New script returns funnelRows + funnelSummary; old script
+                // returns neither. funnelRows is what lets us recompute the
+                // summary client-side when the internal toggle flips.
+                if (json.status === 'ok' && json.rows.length > 1) {
+                    cachedRows = json.rows;
+                    cachedFunnelRows = json.funnelRows || null;
+                    cachedFunnelSummary = json.funnelSummary || null;
+                    renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary);
+                } else {
+                    document.getElementById('content').innerHTML = '<div class="loading">No data yet — scan some cards!</div>';
+                    document.getElementById('subtitle').textContent = 'No captures recorded';
+                }
+            } catch (err) {
+                document.getElementById('content').innerHTML = `<div class="loading">Error loading data: ${err.message}</div>`;
+            }
+        }
+
+        // Compute median time between consecutive funnel steps, plus
+        // end-to-end median for fully completed sessions. Uses the same
+        // showInternal filter as summarizeFunnelClient so durations and counts
+        // stay consistent.
+        //
+        // Caveat: timestamps are set server-side when each POST lands, so
+        // per-step durations carry network-latency noise. Medians across many
+        // sessions damp it; treat as approximate.
+        function computeStepDurationsClient(rows) {
+            const empty = { transitions: {}, endToEnd: null };
+            if (!rows || rows.length < 2) return empty;
+
+            const header = rows[0];
+            const tsCol = header.indexOf('timestamp');
+            const sessionCol = header.indexOf('sessionId');
+            const stepCol = header.indexOf('step');
+            const deviceCol = header.indexOf('deviceId');
+            if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return empty;
+
+            // Group rows into sessions, capturing the earliest timestamp per
+            // step (in case the same step is logged twice within one session).
+            const sessions = new Map();
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                const sid = row[sessionCol];
+                const step = row[stepCol];
+                const ts = row[tsCol];
+                if (!sid || !step || !ts) continue;
+                const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                if (Number.isNaN(ms)) continue;
+                if (!sessions.has(sid)) sessions.set(sid, {});
+                const stepFirstTs = sessions.get(sid);
+                if (stepFirstTs[step] == null || ms < stepFirstTs[step]) {
+                    stepFirstTs[step] = ms;
+                }
+            }
+
+            const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
+            const transitionTimes = {}; // key 'a→b' → [durations in ms]
+            const endToEndTimes = [];
+
+            for (const stepFirstTs of sessions.values()) {
+                for (let i = 1; i < stepOrder.length; i++) {
+                    const prev = stepOrder[i - 1];
+                    const curr = stepOrder[i];
+                    if (stepFirstTs[prev] != null && stepFirstTs[curr] != null) {
+                        const dt = stepFirstTs[curr] - stepFirstTs[prev];
+                        if (dt >= 0) {
+                            const key = `${prev}→${curr}`;
+                            (transitionTimes[key] ||= []).push(dt);
+                        }
+                    }
+                }
+                if (stepFirstTs.started != null && stepFirstTs.saved != null) {
+                    const dt = stepFirstTs.saved - stepFirstTs.started;
+                    if (dt >= 0) endToEndTimes.push(dt);
+                }
+            }
+
+            const transitions = {};
+            Object.entries(transitionTimes).forEach(([k, vals]) => {
+                transitions[k] = { medianMs: median(vals), n: vals.length };
+            });
+
+            return {
+                transitions,
+                endToEnd: endToEndTimes.length
+                    ? { medianMs: median(endToEndTimes), n: endToEndTimes.length }
+                    : null
+            };
+        }
+
+        function median(arr) {
+            if (!arr.length) return null;
+            const sorted = [...arr].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        }
+
+        // One row per started session: where it ended (last step reached) and
+        // how long it took (started → last step). Used for the "Capture
+        // Sessions" table — gives raw visibility into individual flows that
+        // the aggregate funnel hides. Same internal-device filter as the
+        // other funnel functions.
+        function computeSessionsListClient(rows) {
+            if (!rows || rows.length < 2) return [];
+
+            const header = rows[0];
+            const tsCol = header.indexOf('timestamp');
+            const sessionCol = header.indexOf('sessionId');
+            const stepCol = header.indexOf('step');
+            const deviceCol = header.indexOf('deviceId');
+            const modelCol = header.indexOf('deviceModel');
+            const abandonedCol = header.indexOf('abandonedAt');
+            if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return [];
+
+            const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
+            const stepRank = Object.fromEntries(stepOrder.map((s, i) => [s, i]));
+
+            // Group rows by sessionId, tracking earliest timestamp per step
+            // plus the device + any abandonedAt marker.
+            const sessions = new Map();
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+                const sid = row[sessionCol];
+                const step = row[stepCol];
+                const ts = row[tsCol];
+                if (!sid || !step || !ts) continue;
+                const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                if (Number.isNaN(ms)) continue;
+
+                if (!sessions.has(sid)) {
+                    sessions.set(sid, {
+                        sessionId: sid,
+                        deviceId: deviceCol >= 0 ? row[deviceCol] : null,
+                        deviceModel: modelCol >= 0 ? row[modelCol] : null,
+                        stepTs: {},
+                        abandonedAt: null
+                    });
+                }
+                const s = sessions.get(sid);
+                if (s.stepTs[step] == null || ms < s.stepTs[step]) s.stepTs[step] = ms;
+                // First non-empty deviceModel wins — every row in a session
+                // should have the same one anyway, but earlier rows are more
+                // likely to be filled if the column was added recently.
+                if (modelCol >= 0 && row[modelCol] && !s.deviceModel) {
+                    s.deviceModel = row[modelCol];
+                }
+                if (abandonedCol >= 0 && row[abandonedCol] && !s.abandonedAt) {
+                    s.abandonedAt = row[abandonedCol];
+                }
+            }
+
+            // Only include sessions that actually started — the dashboard's
+            // funnel uses "Started" as the denominator, this matches.
+            const out = [];
+            for (const s of sessions.values()) {
+                const startedAt = s.stepTs.started;
+                if (startedAt == null) continue;
+
+                // Last step reached = the step with highest rank that has a ts.
+                let lastStep = 'started';
+                let lastTs = startedAt;
+                for (const step of stepOrder) {
+                    if (s.stepTs[step] != null && stepRank[step] >= stepRank[lastStep]) {
+                        lastStep = step;
+                        lastTs = s.stepTs[step];
+                    }
+                }
+                out.push({
+                    sessionId: s.sessionId,
+                    deviceId: s.deviceId,
+                    deviceModel: s.deviceModel,
+                    startedAt,
+                    lastStep,
+                    lastTs,
+                    durationMs: lastTs - startedAt,
+                    completed: lastStep === 'saved',
+                    abandonedAt: s.abandonedAt
+                });
+            }
+
+            // Most recent first.
+            out.sort((a, b) => b.startedAt - a.startedAt);
+            return out;
+        }
+
+        function formatDuration(ms) {
+            if (ms == null) return '';
+            if (ms < 1000) return `${Math.round(ms)}ms`;
+            const s = ms / 1000;
+            if (s < 60) return `${s.toFixed(1)}s`;
+            const m = Math.floor(s / 60);
+            const rem = Math.round(s - m * 60);
+            return rem ? `${m}m ${rem}s` : `${m}m`;
+        }
+
+        // Client-side mirror of the Apps Script's summarizeFunnel(), with an
+        // extra deviceId filter so the "Show internal" toggle can recompute
+        // the funnel without refetching. Falls back gracefully if the sheet
+        // has no header row or is missing expected columns.
+        function summarizeFunnelClient(rows) {
+            const perStep = {};
+            const abandonedAt = {};
+            if (!rows || rows.length < 2) return { perStep, abandonedAt };
+
+            const header = rows[0];
+            const stepCol = header.indexOf('step');
+            const abandonedCol = header.indexOf('abandonedAt');
+            const deviceCol = header.indexOf('deviceId');
+
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (!showInternal && deviceCol >= 0 && INTERNAL_DEVICES.has(row[deviceCol])) continue;
+
+                const step = row[stepCol];
+                if (step) perStep[step] = (perStep[step] || 0) + 1;
+
+                const at = row[abandonedCol];
+                if (at) abandonedAt[at] = (abandonedAt[at] || 0) + 1;
+            }
+            return { perStep, abandonedAt };
+        }
+
+        // Device-level rollup for the onboarding/activation funnel: which
+        // steps each DEVICE ever reached (across all its sessions). Returns
+        // step → Set of deviceIds, so the funnel counts distinct devices, not
+        // rows. The 'emptyStateShown' rows (logged with no sessionId when the
+        // first-run empty state appears) anchor the denominator.
+        function summarizeOnboardingDevices(rows) {
+            const stepDevices = {};
+            if (!rows || rows.length < 2) return stepDevices;
+            const header = rows[0];
+            const stepCol = header.indexOf('step');
+            const deviceCol = header.indexOf('deviceId');
+            if (stepCol < 0 || deviceCol < 0) return stepDevices;
+            for (let i = 1; i < rows.length; i++) {
+                const dev = rows[i][deviceCol];
+                const step = rows[i][stepCol];
+                if (!dev || !step) continue;
+                if (!showInternal && INTERNAL_DEVICES.has(dev)) continue;
+                (stepDevices[step] = stepDevices[step] || new Set()).add(dev);
+            }
+            return stepDevices;
+        }
+
+        // Usage / friction / monetization rollup over the NEW event rows
+        // (appOpened, searchUsed, retakeOutside, paywallShown, purchased_*, …)
+        // which ride the funnel_step pipeline as extra step names. For each
+        // step: total row count, distinct devices, and distinct devices in
+        // the trailing 7 days (timestamps are server-side arrival times).
+        function summarizeUsage(rows) {
+            const out = {};
+            if (!rows || rows.length < 2) return out;
+            const header = rows[0];
+            const stepCol = header.indexOf('step');
+            const deviceCol = header.indexOf('deviceId');
+            const tsCol = header.indexOf('timestamp');
+            if (stepCol < 0 || deviceCol < 0) return out;
+            const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const dev = row[deviceCol];
+                const step = row[stepCol];
+                if (!dev || !step) continue;
+                if (!showInternal && INTERNAL_DEVICES.has(dev)) continue;
+                const e = (out[step] = out[step] || { count: 0, devices: new Set(), devices7d: new Set() });
+                e.count++;
+                e.devices.add(dev);
+                const ts = row[tsCol];
+                const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                if (!Number.isNaN(ms) && ms >= cutoff) e.devices7d.add(dev);
+            }
+            return out;
+        }
+
+        // --- Section renderers for the usage rollup ---------------------
+
+        const usageStat = (u, key) => u[key] || { count: 0, devices: new Set(), devices7d: new Set() };
+
+        // Engagement: is the app being USED between scans? Device-level
+        // pulses (each throttled app-side to one row/day/device).
+        function renderEngagementSection(u) {
+            const opened = usageStat(u, 'appOpened');
+            if (opened.count === 0) return '';  // no data until builds with the pulse ship
+            const rows = [
+                ['Active devices (7d)', usageStat(u, 'appOpened').devices7d.size, 'opened the app'],
+                ['Searchers (7d)',      usageStat(u, 'searchUsed').devices7d.size, 'used search'],
+                ['Card viewers (7d)',   usageStat(u, 'cardOpened').devices7d.size, 'opened a card'],
+                ['Detail reveals (7d)', usageStat(u, 'detailsRevealed').devices7d.size, 'pulled up details'],
+                ['Editors (7d)',        usageStat(u, 'cardEdited').devices7d.size, 'edited a card'],
+            ];
+            let html = '<div class="chart-card" style="margin-bottom:24px">';
+            html += '<h3>Engagement<span style="color:#555;font-weight:400"> · distinct devices, trailing 7 days</span></h3>';
+            html += '<div class="stats-grid">';
+            rows.forEach(([label, value, sub]) => { html += statCard(label, value, sub); });
+            html += '</div>';
+            const creations = [
+                ['Moments created', usageStat(u, 'momentCreated').count],
+                ['Categories created', usageStat(u, 'categoryCreated').count],
+                ['Cards deleted', usageStat(u, 'cardDeleted').count],
+            ];
+            html += '<div style="margin-top:12px;display:flex;gap:24px;flex-wrap:wrap">';
+            creations.forEach(([label, n]) => {
+                html += `<span style="font-size:13px;color:#888">${label}: <span style="color:#fff;font-weight:600">${n}</span> all-time</span>`;
+            });
+            html += '</div></div>';
+            return html;
+        }
+
+        // Friction: where do people struggle? Retakes = camera trouble
+        // (which side tells where); backsteps = flow confusion. Rates are
+        // per started scan session so they stay comparable as volume grows.
+        function renderFrictionSection(u, funnelSummary) {
+            const retakesOut = usageStat(u, 'retakeOutside').count;
+            const retakesIn = usageStat(u, 'retakeInside').count;
+            const backsteps = usageStat(u, 'scanBackstep').count;
+            if (retakesOut + retakesIn + backsteps === 0) return '';
+            const started = (funnelSummary && funnelSummary.perStep && funnelSummary.perStep.started) || 0;
+            const per = (n) => started ? (n / started).toFixed(2) : '—';
+            let html = '<div class="chart-card" style="margin-bottom:24px">';
+            html += '<h3>Friction<span style="color:#555;font-weight:400"> · capture retakes & backtracking (drop-off lives in the Scan Funnel)</span></h3>';
+            html += '<div class="stats-grid">';
+            html += statCard('Outside retakes', retakesOut, `${per(retakesOut)} per started scan`);
+            html += statCard('Inside retakes', retakesIn, `${per(retakesIn)} per started scan`);
+            html += statCard('Backsteps', backsteps, `${per(backsteps)} per started scan`);
+            html += '</div></div>';
+            return html;
+        }
+
+        // Monetization: paywall exposure → purchase, by tier. Counts distinct
+        // devices on both sides so repeated paywall views don't dilute.
+        function renderMonetizationSection(u) {
+            const seen = usageStat(u, 'paywallShown').devices;
+            const t20 = usageStat(u, 'purchased_tier20').devices;
+            const t100 = usageStat(u, 'purchased_tier100').devices;
+            const unl = usageStat(u, 'purchased_unlimited').devices;
+            const buyers = new Set([...t20, ...t100, ...unl]);
+            if (seen.size === 0 && buyers.size === 0) return '';
+            const conv = seen.size ? (buyers.size / seen.size * 100).toFixed(1) : '—';
+            let html = '<div class="chart-card" style="margin-bottom:24px">';
+            html += '<h3>Monetization<span style="color:#555;font-weight:400"> · distinct devices</span></h3>';
+            html += '<div class="stats-grid">';
+            html += statCard('Saw the paywall', seen.size, 'all-time devices');
+            html += statCard('Purchased', buyers.size, `${conv}% of paywall viewers`);
+            html += statCard('Up to 20', t20.size, 'tier purchases');
+            html += statCard('Up to 100', t100.size, 'tier purchases');
+            html += statCard('Unlimited', unl.size, 'tier purchases');
+            html += '</div></div>';
+            return html;
+        }
+
+        const INTERNAL_DEVICES = new Set([
+            '103DF45F-718F-475C-A0AF-BC0D50CD4ECB',
+            '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3'
+        ]);
+
+        // "Show internal" toggle state, persisted so a reload respects the
+        // previous choice. Read eagerly so the checkbox reflects it on init.
+        let showInternal = localStorage.getItem('showInternal') === 'true';
+
+        function renderDashboard(rows, funnelRows, funnelSummary) {
+            const headers = rows[0];
+            const allData = rows.slice(1).map(row => {
+                const obj = {};
+                headers.forEach((h, i) => obj[h] = row[i]);
+                return obj;
+            });
+
+            // If we have raw funnel rows, recompute the summary client-side
+            // so it respects the internal-devices filter. Fall back to the
+            // server's pre-computed summary only if raw rows aren't available.
+            const effectiveFunnelSummary = funnelRows
+                ? summarizeFunnelClient(funnelRows)
+                : funnelSummary;
+            const stepDurations = funnelRows
+                ? computeStepDurationsClient(funnelRows)
+                : { transitions: {}, endToEnd: null };
+            const sessionsList = funnelRows
+                ? computeSessionsListClient(funnelRows)
+                : [];
+
+            // When internal is hidden, it's hidden everywhere (stats, charts,
+            // table) so nothing can accidentally leak test captures into a
+            // public view. When shown, internal rows appear in the table
+            // with a faded INTERNAL badge but the numbers reflect the full set.
+            const visible = showInternal
+                ? allData
+                : allData.filter(d => !INTERNAL_DEVICES.has(d['deviceId']));
+            const data = visible;
+            const tableData = visible;
+
+            // Stats
+            const total = data.length;
+            const devices = new Set(data.map(d => d['deviceId'])).size;
+            const dieCuts = data.filter(d => d['isDieCut'] === true || d['isDieCut'] === 'TRUE').length;
+            const withFrom = data.filter(d => d['hasFromPerson'] === true || d['hasFromPerson'] === 'TRUE').length;
+
+            // Card types
+            const types = {};
+            data.forEach(d => {
+                const t = d['cardType'] || 'unknown';
+                types[t] = (types[t] || 0) + 1;
+            });
+
+            // Categories
+            const categories = {};
+            data.forEach(d => {
+                const c = d['category'] || 'Uncategorized';
+                if (c) categories[c] = (categories[c] || 0) + 1;
+            });
+
+            // Timeline (by day)
+            const byDay = {};
+            data.forEach(d => {
+                const ts = d['timestamp'];
+                // Apps Script serializes Date cells as ISO strings, but sheets
+                // may also return them as Date objects. Normalize both.
+                const dayStr = ts instanceof Date
+                    ? ts.toISOString().split('T')[0]
+                    : (typeof ts === 'string' ? ts.split('T')[0] : 'unknown');
+                byDay[dayStr] = (byDay[dayStr] || 0) + 1;
+            });
+            const sortedDays = Object.keys(byDay).sort();
+            // Show last 14 days max
+            const recentDays = sortedDays.slice(-14);
+
+            // Device models
+            const models = {};
+            data.forEach(d => {
+                const m = d['deviceModel'] || 'unknown';
+                models[m] = (models[m] || 0) + 1;
+            });
+
+            const typeColors = {
+                vertical: '#6bba6b',
+                horizontal: '#6b8bba',
+                postcard: '#ba6bba'
+            };
+
+            const catColors = ['#ED9B61', '#6bba6b', '#6b8bba', '#ba6bba', '#ba6b6b', '#6bbaba', '#baba6b', '#9b6bba'];
+
+            document.getElementById('subtitle').textContent = `${total} cards captured across ${devices} device${devices !== 1 ? 's' : ''}`;
+
+            let html = '';
+
+            // Stat cards
+            html += '<div class="stats-grid">';
+            html += statCard('Total Cards', total, 'All time');
+            html += statCard('Devices', devices, 'Unique');
+            html += statCard('Die-Cut', dieCuts, `${total ? Math.round(dieCuts/total*100) : 0}% of total`);
+            html += statCard('With Sender', withFrom, `${total ? Math.round(withFrom/total*100) : 0}% tagged`);
+            html += '</div>';
+
+            // Onboarding (activation) funnel — device-level, from the first-run
+            // empty state through to a first saved card. The headline question,
+            // so it sits above the session-level scan funnel. Hidden until the
+            // 'emptyStateShown' event has data.
+            if (funnelRows) {
+                html += renderOnboardingFunnel(summarizeOnboardingDevices(funnelRows));
+            }
+
+            // Usage / friction / monetization — built from the new pulse +
+            // friction events riding the funnel pipeline. Each section hides
+            // itself until builds that log its events ship data.
+            if (funnelRows) {
+                const usage = summarizeUsage(funnelRows);
+                html += renderEngagementSection(usage);
+                html += renderFrictionSection(usage, effectiveFunnelSummary);
+                html += renderMonetizationSection(usage);
+            }
+
+            // Funnel section (only if the new Apps Script has served data)
+            if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
+                html += renderFunnelSection(effectiveFunnelSummary, stepDurations);
+            }
+
+            // Unified capture timeline — combines the per-session funnel data
+            // (every started capture + where it ended + duration) with the
+            // per-card capture metadata (type/category/die-cut/from). One
+            // row per session when funnel data exists; orphan capture rows
+            // (saved before FunnelSteps logging existed, or saved without a
+            // matching session) are appended so nothing's hidden.
+            //
+            // FunnelSteps rows only carry deviceId, not deviceModel — build
+            // a deviceId → most-recent-model map from the Captures sheet as
+            // a fallback for older sessions.
+            const deviceModels = {};
+            allData.forEach(d => {
+                const id = d['deviceId'];
+                const model = d['deviceModel'];
+                if (id && model) deviceModels[id] = model;
+            });
+            html += renderTimeline(sessionsList, tableData, deviceModels);
+
+            // Charts
+            html += '<div class="charts-grid">';
+
+            // Card type donut
+            html += '<div class="chart-card">';
+            html += '<h3>Card Types</h3>';
+            html += renderDonut(types, typeColors);
+            html += '</div>';
+
+            // Categories bar chart
+            html += '<div class="chart-card">';
+            html += '<h3>Categories</h3>';
+            const sortedCats = Object.entries(categories).sort((a, b) => b[1] - a[1]);
+            const maxCat = sortedCats.length ? sortedCats[0][1] : 1;
+            html += '<div class="bar-chart">';
+            sortedCats.forEach(([name, count], i) => {
+                const pct = (count / maxCat * 100).toFixed(1);
+                const color = catColors[i % catColors.length];
+                html += `<div class="bar-row">
+                    <div class="bar-label">${name}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+                    <div class="bar-count">${count}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+
+            // Devices
+            html += '<div class="chart-card">';
+            html += '<h3>Device Models</h3>';
+            // Map internal model IDs to friendly names and merge duplicates
+            const friendlyModels = {};
+            Object.entries(models).forEach(([model, count]) => {
+                const name = deviceName(model);
+                friendlyModels[name] = (friendlyModels[name] || 0) + count;
+            });
+            const sortedModels = Object.entries(friendlyModels).sort((a, b) => b[1] - a[1]);
+            const maxModel = sortedModels.length ? sortedModels[0][1] : 1;
+            html += '<div class="bar-chart">';
+            sortedModels.forEach(([name, count]) => {
+                const pct = (count / maxModel * 100).toFixed(1);
+                html += `<div class="bar-row">
+                    <div class="bar-label" style="width:120px">${name}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#ED9B61"></div></div>
+                    <div class="bar-count">${count}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+
+            // Locations — derived from device locale + timezone (no GPS,
+            // no permission). Country = ISO region from iOS Settings,
+            // timezone = IANA identifier. Only renders if at least one row
+            // carries either field, so old data without location columns
+            // doesn't cause an empty card.
+            const countries = {};
+            const timezones = {};
+            data.forEach(d => {
+                const c = d['country'];
+                const tz = d['timezone'];
+                if (c) countries[c] = (countries[c] || 0) + 1;
+                if (tz) timezones[tz] = (timezones[tz] || 0) + 1;
+            });
+            const hasLocation = Object.keys(countries).length || Object.keys(timezones).length;
+            if (hasLocation) {
+                html += '<div class="chart-card">';
+                html += '<h3>Locations <span style="color:#555;font-weight:400;font-size:13px">· device locale + timezone</span></h3>';
+
+                // Countries: friendly name + flag emoji
+                const sortedCountries = Object.entries(countries).sort((a, b) => b[1] - a[1]);
+                const maxCountry = sortedCountries.length ? sortedCountries[0][1] : 1;
+                html += '<div class="bar-chart" style="margin-bottom:16px">';
+                sortedCountries.forEach(([code, count]) => {
+                    const pct = (count / maxCountry * 100).toFixed(1);
+                    const flag = countryFlag(code);
+                    const name = countryName(code);
+                    html += `<div class="bar-row">
+                        <div class="bar-label" style="width:160px">${flag} ${name} <span style="color:#555">${code}</span></div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#6b8bba"></div></div>
+                        <div class="bar-count">${count}</div>
+                    </div>`;
+                });
+                html += '</div>';
+
+                // Timezones: secondary, smaller list
+                const sortedTzs = Object.entries(timezones).sort((a, b) => b[1] - a[1]).slice(0, 8);
+                if (sortedTzs.length) {
+                    html += '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Timezones</div>';
+                    const maxTz = sortedTzs[0][1];
+                    html += '<div class="bar-chart">';
+                    sortedTzs.forEach(([tz, count]) => {
+                        const pct = (count / maxTz * 100).toFixed(1);
+                        // Drop the IANA continent prefix to save horizontal
+                        // space — "America/Toronto" → "Toronto".
+                        const short = tz.includes('/') ? tz.split('/').slice(1).join('/').replace(/_/g, ' ') : tz;
+                        html += `<div class="bar-row">
+                            <div class="bar-label" style="width:160px;font-size:12px">${short}</div>
+                            <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#6bba6b;opacity:0.6"></div></div>
+                            <div class="bar-count">${count}</div>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+
+                html += '</div>';
+            }
+
+            html += '</div>';
+
+            // Timeline — full width
+            html += '<div class="chart-card" style="max-width:1200px;margin:0 auto 32px">';
+            html += '<h3>Captures Over Time</h3>';
+            const maxDay = Math.max(...recentDays.map(d => byDay[d]));
+            html += '<div class="timeline-chart">';
+            recentDays.forEach(day => {
+                const count = byDay[day];
+                const pct = (count / maxDay * 100).toFixed(1);
+                const label = day.slice(5); // MM-DD
+                html += `<div class="timeline-bar-wrapper">
+                    <div class="timeline-bar" style="height:${pct}%" title="${day}: ${count} cards"></div>
+                    <div class="timeline-label">${label}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function formatTime(date) {
+            const now = new Date();
+            const diff = now - date;
+            const mins = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+
+            let relative;
+            if (mins < 1) relative = 'Just now';
+            else if (mins < 60) relative = `${mins}m ago`;
+            else if (hours < 24) relative = `${hours}h ago`;
+            else if (days === 1) relative = 'Yesterday';
+            else if (days < 7) relative = `${days}d ago`;
+            else relative = null;
+
+            const timeStr = date.toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+
+            return relative ? `${relative} <span style="color:#555">${timeStr}</span>` : timeStr;
+        }
+
+        function statCard(label, value, sub) {
+            return `<div class="stat-card">
+                <div class="stat-label">${label}</div>
+                <div class="stat-value">${value}</div>
+                <div class="stat-sub">${sub}</div>
+            </div>`;
+        }
+
+        // Renders the scan-funnel section: one bar per step scaled to the
+        // number of sessions that started, plus a drop-off chart showing where
+        // abandoners bailed. The step order matches AnalyticsService.FunnelStep
+        // in the iOS app.
+        //
+        // Per-step duration labels show median time spent reaching that step
+        // from the previous one (computed client-side from session timestamps).
+        // Onboarding / activation funnel — DEVICE-level, anchored at the
+        // first-run empty state. Answers "of people who saw onboarding, how
+        // many made it through each scan step to a first saved card?" This is
+        // distinct from the session-level Scan Funnel below (which counts every
+        // scan attempt, by anyone). Renders nothing until the 'emptyStateShown'
+        // event has data (it ships in the app build that logs it).
+        function renderOnboardingFunnel(stepDevices) {
+            const onboarded = stepDevices['emptyStateShown'];
+            const N = onboarded ? onboarded.size : 0;
+            if (N === 0) return '';
+
+            const order = [
+                { key: 'emptyStateShown',   label: 'Saw onboarding' },
+                { key: 'started',           label: 'Opened scanner' },
+                { key: 'outsideScanned',    label: 'Scanned outside' },
+                { key: 'previewReached',    label: 'Reached preview' },
+                { key: 'categorizeReached', label: 'Reached categorize' },
+                { key: 'saved',             label: 'Saved first card' }
+            ];
+
+            // Distinct onboarded devices that also reached the given step.
+            const countAt = (key) => {
+                if (key === 'emptyStateShown') return N;
+                const set = stepDevices[key];
+                if (!set) return 0;
+                let n = 0;
+                set.forEach(d => { if (onboarded.has(d)) n++; });
+                return n;
+            };
+
+            let html = '<div class="chart-card" style="margin-bottom:24px">';
+            html += `<h3>Onboarding Funnel — ${N} new device${N === 1 ? '' : 's'}<span style="color:#555;font-weight:400"> · from the first-run empty state to a first saved card</span></h3>`;
+            html += '<div class="bar-chart">';
+            let prev = N;
+            order.forEach((s, i) => {
+                const count = countAt(s.key);
+                const pct = N ? count / N * 100 : 0;
+                const drop = prev ? (prev - count) / prev * 100 : 0;
+                const dropLabel = i === 0 ? '' : `<span style="color:#666"> · −${drop.toFixed(0)}%</span>`;
+                html += `<div class="bar-row">
+                    <div class="bar-label" style="width:150px">${s.label}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%;background:#ED9B61;opacity:${0.4 + pct / 200}"></div></div>
+                    <div class="bar-count" style="width:120px">${count} <span style="color:#555">(${pct.toFixed(0)}%)</span>${dropLabel}</div>
+                </div>`;
+                prev = count;
+            });
+            html += '</div>';
+
+            const conv = N ? countAt('saved') / N * 100 : 0;
+            html += `<div style="margin-top:16px;padding-top:14px;border-top:1px solid #222;display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px">Onboarding → first card</span>
+                <span style="font-size:24px;font-weight:700;color:#fff">${conv.toFixed(1)}%</span>
+            </div>`;
+            html += '</div>';
+            return html;
+        }
+
+        function renderFunnelSection(summary, durations) {
+            const stepOrder = [
+                { key: 'started', label: 'Started' },
+                { key: 'typeChosen', label: 'Type chosen' },
+                { key: 'outsideScanned', label: 'Outside scanned' },
+                { key: 'previewReached', label: 'Preview reached' },
+                { key: 'categorizeReached', label: 'Categorize' },
+                { key: 'saved', label: 'Saved' }
+            ];
+
+            const perStep = summary.perStep || {};
+            const abandonedAt = summary.abandonedAt || {};
+            const transitions = (durations && durations.transitions) || {};
+            const endToEnd = durations && durations.endToEnd;
+            const started = perStep.started || 0;
+
+            if (started === 0) return '';
+
+            let html = '<div class="charts-grid" style="grid-template-columns:1fr 1fr">';
+
+            // Left: the funnel itself
+            html += '<div class="chart-card">';
+            html += `<h3>Scan Funnel — ${started} session${started === 1 ? '' : 's'}<span style="color:#555;font-weight:400"> · median time per step</span></h3>`;
+            html += '<div class="bar-chart">';
+            let prevCount = started;
+            stepOrder.forEach((s, i) => {
+                const count = perStep[s.key] || 0;
+                const pctOfStart = started ? (count / started * 100) : 0;
+                const dropFromPrev = prevCount ? ((prevCount - count) / prevCount * 100) : 0;
+                // Color fades from brand orange to a deeper tone as the
+                // funnel narrows — makes the drop-off visually obvious.
+                const color = i === 0 ? '#ED9B61' : (count === 0 ? '#3a3a3a' : '#ED9B61');
+                const dropLabel = i === 0 ? '' :
+                    `<span style="color:#666"> · −${dropFromPrev.toFixed(0)}%</span>`;
+                // Median time from previous step → this step (no label on
+                // "Started" since there's no preceding step to time from).
+                let timeLabel = '';
+                if (i > 0) {
+                    const t = transitions[`${stepOrder[i - 1].key}→${s.key}`];
+                    if (t && t.medianMs != null) {
+                        timeLabel = `<div style="font-size:11px;color:#666;margin-top:2px">+${formatDuration(t.medianMs)} <span style="color:#444">(n=${t.n})</span></div>`;
+                    }
+                }
+                html += `<div class="bar-row">
+                    <div class="bar-label" style="width:120px">${s.label}</div>
+                    <div style="flex:1;display:flex;flex-direction:column;gap:0">
+                        <div class="bar-track">
+                            <div class="bar-fill" style="width:${pctOfStart.toFixed(1)}%;background:${color};opacity:${0.4 + (pctOfStart/200)}"></div>
+                        </div>
+                        ${timeLabel}
+                    </div>
+                    <div class="bar-count" style="width:90px">${count} <span style="color:#555">(${pctOfStart.toFixed(0)}%)</span>${dropLabel}</div>
+                </div>`;
+                prevCount = count;
+            });
+            html += '</div>';
+
+            // Overall conversion rate, plus median end-to-end time for fully
+            // completed sessions when we have it.
+            const saved = perStep.saved || 0;
+            const overall = started ? (saved / started * 100) : 0;
+            const endToEndLabel = endToEnd && endToEnd.medianMs != null
+                ? ` <span style="font-size:13px;font-weight:400;color:#888">· ${formatDuration(endToEnd.medianMs)} median</span>`
+                : '';
+            html += `<div style="margin-top:20px;padding-top:16px;border-top:1px solid #222;display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-size:12px;color:#666;text-transform:uppercase;letter-spacing:1px">Overall completion</span>
+                <span style="font-size:24px;font-weight:700;color:#fff">${overall.toFixed(1)}%${endToEndLabel}</span>
+            </div>`;
+            html += '</div>';
+
+            // Right: drop-off chart — where abandoners bailed
+            html += '<div class="chart-card">';
+            const totalAbandoned = Object.values(abandonedAt).reduce((s, n) => s + n, 0);
+            html += `<h3>Where Users Drop Off — ${totalAbandoned} abandoned</h3>`;
+
+            if (totalAbandoned === 0) {
+                html += '<div style="color:#555;font-size:13px;padding:12px 0">No abandoned sessions yet.</div>';
+            } else {
+                html += '<div class="bar-chart">';
+                const dropOrder = stepOrder.slice(0, -1); // can't abandon from "saved"
+                const maxDrop = Math.max(...dropOrder.map(s => abandonedAt[s.key] || 0), 1);
+                dropOrder.forEach(s => {
+                    const count = abandonedAt[s.key] || 0;
+                    const pct = (count / maxDrop * 100).toFixed(1);
+                    const shareOfAbandoned = totalAbandoned ? (count / totalAbandoned * 100) : 0;
+                    html += `<div class="bar-row">
+                        <div class="bar-label" style="width:120px">At ${s.label}</div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#ba6b6b"></div></div>
+                        <div class="bar-count" style="width:70px">${count} <span style="color:#555">(${shareOfAbandoned.toFixed(0)}%)</span></div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+            html += '</div>';
+
+            html += '</div>'; // charts-grid
+
+            return html;
+        }
+
+        // Unified capture timeline: every started session in chronological
+        // order, enriched with the saved card's metadata when one exists.
+        // Captures that have no matching session (older data, or saves
+        // logged before FunnelSteps existed) are appended as "capture-only"
+        // rows so the timeline stays complete.
+        //
+        // Match strategy: prefer sessionId (if Captures sheet carries one),
+        // then fall back to deviceId + timestamp proximity (within 60s of
+        // the session's last step). If neither matches, the saved-session
+        // row just shows "—" for the per-card columns.
+        function renderTimeline(sessions, captureRows, deviceModels) {
+            sessions = sessions || [];
+            captureRows = captureRows || [];
+            deviceModels = deviceModels || {};
+
+            const stepLabels = {
+                started: 'Started',
+                typeChosen: 'Type chosen',
+                outsideScanned: 'Outside scanned',
+                previewReached: 'Preview reached',
+                categorizeReached: 'Categorize',
+                saved: 'Saved'
+            };
+
+            // Index captures by sessionId for fast lookup. Track which ones
+            // we matched to a session so we can list orphans afterward.
+            const captureBySession = {};
+            const captureTs = captureRows.map(c => {
+                const ts = c['timestamp'];
+                return ts ? (ts instanceof Date ? ts.getTime() : new Date(ts).getTime()) : NaN;
+            });
+            captureRows.forEach(c => {
+                if (c['sessionId']) captureBySession[c['sessionId']] = c;
+            });
+            const matched = new Set();
+
+            function findCapture(session) {
+                let cap = captureBySession[session.sessionId];
+                if (cap) {
+                    matched.add(captureRows.indexOf(cap));
+                    return cap;
+                }
+                // Fallback: same device, capture lands within 60s of the
+                // session's last logged step. Pick the closest match.
+                if (!session.completed || !session.deviceId) return null;
+                let bestIdx = -1;
+                let bestDist = Infinity;
+                for (let i = 0; i < captureRows.length; i++) {
+                    if (matched.has(i)) continue;
+                    if (captureRows[i]['deviceId'] !== session.deviceId) continue;
+                    const dist = Math.abs(captureTs[i] - session.lastTs);
+                    if (Number.isNaN(dist) || dist > 60000) continue;
+                    if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+                }
+                if (bestIdx >= 0) {
+                    matched.add(bestIdx);
+                    return captureRows[bestIdx];
+                }
+                return null;
+            }
+
+            // Build session rows
+            const rows = sessions.map(s => {
+                const capture = findCapture(s);
+                return { kind: 'session', sortTs: s.startedAt, session: s, capture };
+            });
+
+            // Append orphan captures (no matching session)
+            captureRows.forEach((c, i) => {
+                if (matched.has(i)) return;
+                if (Number.isNaN(captureTs[i])) return;
+                rows.push({ kind: 'capture-only', sortTs: captureTs[i], session: null, capture: c });
+            });
+
+            if (!rows.length) return '';
+
+            rows.sort((a, b) => b.sortTs - a.sortTs);
+
+            // Cluster adjacent rows from the same device that landed within
+            // BURST_GAP_MS of each other — these are almost always one user
+            // tapping in and out of the flow, not separate intent. Showing
+            // them as a single collapsed row keeps the timeline scannable.
+            // Clicking the cluster header reveals the individual rows.
+            const BURST_GAP_MS = 5 * 60 * 1000; // 5 minutes
+            const clusters = [];
+            for (const r of rows) {
+                const deviceId = (r.session && r.session.deviceId) || (r.capture && r.capture['deviceId']) || null;
+                const last = clusters[clusters.length - 1];
+                if (last
+                    && last.deviceId
+                    && last.deviceId === deviceId
+                    && (last.minTs - r.sortTs) < BURST_GAP_MS) {
+                    last.rows.push(r);
+                    last.minTs = Math.min(last.minTs, r.sortTs);
+                } else {
+                    clusters.push({ deviceId, rows: [r], minTs: r.sortTs });
+                }
+            }
+            // Cap how many clusters we show so the table stays bounded.
+            const MAX_CLUSTERS = 40;
+            const limitedClusters = clusters.slice(0, MAX_CLUSTERS);
+
+            const startedCount = sessions.length;
+            const savedCount = sessions.filter(s => s.completed).length;
+            const completionPct = startedCount ? (savedCount / startedCount * 100).toFixed(0) : 0;
+            const summaryLine = startedCount
+                ? `${startedCount} started · ${savedCount} saved (${completionPct}%) · ${captureRows.length} total captures`
+                : `${captureRows.length} captures`;
+
+            let html = '<div class="table-card" style="max-width:1200px;margin:0 auto 32px">';
+            html += `<h3>Capture Timeline <span style="color:#555;font-weight:400;font-size:13px">· ${summaryLine}</span></h3>`;
+            html += '<table><thead><tr>';
+            html += '<th>Time</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Type</th><th>Category</th><th>Die-Cut</th><th>From</th><th>Model</th><th>Version</th>';
+            html += '</tr></thead><tbody>';
+
+            // Render one row in the timeline. extraClass lets the caller
+            // tag it as a cluster-child so CSS can indent + colour it.
+            function renderRow(r, extraClass) {
+                const s = r.session;
+                const c = r.capture;
+                const deviceId = (s && s.deviceId) || (c && c['deviceId']) || null;
+                const isInternal = deviceId && INTERNAL_DEVICES.has(deviceId);
+                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
+                const opacity = isInternal ? 'opacity:0.5;' : '';
+                const time = formatTime(new Date(r.sortTs));
+
+                let outcomeBadge;
+                if (s) {
+                    outcomeBadge = s.completed
+                        ? '<span class="badge badge-saved">Saved</span>'
+                        : '<span class="badge badge-abandoned">Abandoned</span>';
+                } else {
+                    outcomeBadge = '<span class="badge badge-saved" style="opacity:0.7">Saved</span>';
+                }
+
+                let lastLabel = '—';
+                let durationStr = '—';
+                if (s) {
+                    lastLabel = stepLabels[s.lastStep] || s.lastStep;
+                    if (!s.completed && s.abandonedAt && s.abandonedAt !== s.lastStep) {
+                        lastLabel += ` <span style="color:#666;font-size:11px">(exit: ${stepLabels[s.abandonedAt] || s.abandonedAt})</span>`;
+                    }
+                    durationStr = s.durationMs > 0 ? formatDuration(s.durationMs) : '—';
+                }
+
+                let typeCell = '—';
+                let cat = '—';
+                let diecut = '—';
+                let from = '—';
+                let version = '—';
+                if (c) {
+                    const type = c['cardType'] || '—';
+                    typeCell = type !== '—' ? `<span class="badge badge-${type}">${type}</span>` : '—';
+                    cat = c['category'] || '—';
+                    diecut = (c['isDieCut'] === true || c['isDieCut'] === 'TRUE')
+                        ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
+                    from = (c['hasFromPerson'] === true || c['hasFromPerson'] === 'TRUE') ? 'Yes' : '—';
+                    version = c['appVersion'] || '—';
+                }
+
+                const modelCode = (s && s.deviceModel)
+                    || (c && c['deviceModel'])
+                    || (deviceId ? deviceModels[deviceId] : null);
+                const modelLabel = modelCode ? deviceName(modelCode) : '—';
+
+                const cls = extraClass ? ` class="${extraClass}"` : '';
+                const style = (extraClass ? 'display:none;' : '') + opacity;
+                const styleAttr = style ? ` style="${style}"` : '';
+
+                return `<tr${cls}${styleAttr}>
+                    <td>${time}${internalBadge}</td>
+                    <td>${outcomeBadge}</td>
+                    <td>${lastLabel}</td>
+                    <td>${durationStr}</td>
+                    <td>${typeCell}</td>
+                    <td>${cat}</td>
+                    <td>${diecut}</td>
+                    <td>${from}</td>
+                    <td>${modelLabel}</td>
+                    <td>${version}</td>
+                </tr>`;
+            }
+
+            let clusterIdx = 0;
+            limitedClusters.forEach(cluster => {
+                if (cluster.rows.length === 1) {
+                    html += renderRow(cluster.rows[0], null);
+                    return;
+                }
+
+                // Multi-row cluster: header summary + hidden child rows.
+                clusterIdx++;
+                const clusterId = `tlc${clusterIdx}`;
+                const cRows = cluster.rows;
+                const newest = cRows[0];                   // most recent (rows are desc-sorted)
+                const oldest = cRows[cRows.length - 1];
+                const spanMs = newest.sortTs - oldest.sortTs;
+                const sessionRows = cRows.filter(r => r.session);
+                const savedInCluster = sessionRows.filter(r => r.session.completed).length;
+                const abandonedInCluster = sessionRows.length - savedInCluster;
+                const captureOnly = cRows.length - sessionRows.length;
+
+                // Most common last step (only when we have session rows)
+                let dominantStep = null;
+                if (sessionRows.length) {
+                    const counts = {};
+                    sessionRows.forEach(r => {
+                        counts[r.session.lastStep] = (counts[r.session.lastStep] || 0) + 1;
+                    });
+                    dominantStep = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+                }
+
+                // Device + model for header
+                const dId = cluster.deviceId;
+                const isInternal = dId && INTERNAL_DEVICES.has(dId);
+                const sampleSession = sessionRows[0] && sessionRows[0].session;
+                const sampleCapture = cRows.find(r => r.capture) && cRows.find(r => r.capture).capture;
+                const modelCode = (sampleSession && sampleSession.deviceModel)
+                    || (sampleCapture && sampleCapture['deviceModel'])
+                    || (dId ? deviceModels[dId] : null);
+                const modelLabel = modelCode ? deviceName(modelCode) : '—';
+                const internalBadge = isInternal ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>' : '';
+
+                // Build the summary text
+                const newestTime = formatTime(new Date(newest.sortTs));
+                const spanLabel = spanMs > 0 ? formatDuration(spanMs) : '<1s';
+                const outcomeBits = [];
+                if (savedInCluster) outcomeBits.push(`<span style="color:#6bba6b">${savedInCluster} saved</span>`);
+                if (abandonedInCluster) outcomeBits.push(`<span style="color:#ba6b6b">${abandonedInCluster} abandoned</span>`);
+                if (captureOnly) outcomeBits.push(`${captureOnly} capture${captureOnly === 1 ? '' : 's'}`);
+                const stepBit = dominantStep
+                    ? ` · mostly <em style="font-style:normal;color:#bbb">${stepLabels[dominantStep] || dominantStep}</em>`
+                    : '';
+
+                const opacity = isInternal ? 'opacity:0.5;' : '';
+
+                html += `<tr class="cluster-header" data-cluster-id="${clusterId}" onclick="toggleCluster('${clusterId}', this)" style="${opacity}">
+                    <td colspan="10">
+                        <span class="cluster-arrow">▶</span>
+                        <strong style="color:#ccc">${cRows.length} sessions</strong> in a burst${internalBadge}
+                        <span style="color:#666"> · ${newestTime} · span ${spanLabel} · ${modelLabel}</span>
+                        <span style="color:#666"> · ${outcomeBits.join(' · ') || '—'}${stepBit}</span>
+                    </td>
+                </tr>`;
+
+                cRows.forEach(r => {
+                    html += renderRow(r, `cluster-row ${clusterId}`);
+                });
+            });
+
+            html += '</tbody></table></div>';
+            return html;
+        }
+
+        function renderDonut(data, colorMap) {
+            const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
+            const total = entries.reduce((s, e) => s + e[1], 0);
+            const defaultColors = ['#ED9B61', '#6bba6b', '#6b8bba', '#ba6bba'];
+
+            const size = 120;
+            const cx = size / 2, cy = size / 2, r = 44, stroke = 14;
+            const circumference = 2 * Math.PI * r;
+
+            let offset = 0;
+            let arcs = '';
+            let legend = '';
+
+            entries.forEach(([name, count], i) => {
+                const color = colorMap[name] || defaultColors[i % defaultColors.length];
+                const pct = count / total;
+                const dashLen = pct * circumference;
+                const gap = circumference - dashLen;
+
+                arcs += `<circle cx="${cx}" cy="${cy}" r="${r}"
+                    fill="none" stroke="${color}" stroke-width="${stroke}"
+                    stroke-dasharray="${dashLen} ${gap}"
+                    stroke-dashoffset="${-offset}"
+                    transform="rotate(-90 ${cx} ${cy})" />`;
+
+                offset += dashLen;
+
+                legend += `<div class="legend-item">
+                    <div class="legend-dot" style="background:${color}"></div>
+                    ${name}
+                    <span class="legend-count">${count} (${Math.round(pct*100)}%)</span>
+                </div>`;
+            });
+
+            // Center text
+            arcs += `<text x="${cx}" y="${cy}" text-anchor="middle" dy="0.35em"
+                fill="#fff" font-size="20" font-weight="700">${total}</text>`;
+
+            return `<div class="donut-container">
+                <svg class="donut-svg" width="${size}" height="${size}">${arcs}</svg>
+                <div class="donut-legend">${legend}</div>
+            </div>`;
+        }
+
+        const DEVICE_NAMES = {
+            // iPhone
+            'iPhone8,1': 'iPhone 6s', 'iPhone8,2': 'iPhone 6s Plus', 'iPhone8,4': 'iPhone SE',
+            'iPhone9,1': 'iPhone 7', 'iPhone9,3': 'iPhone 7', 'iPhone9,2': 'iPhone 7 Plus', 'iPhone9,4': 'iPhone 7 Plus',
+            'iPhone10,1': 'iPhone 8', 'iPhone10,4': 'iPhone 8', 'iPhone10,2': 'iPhone 8 Plus', 'iPhone10,5': 'iPhone 8 Plus',
+            'iPhone10,3': 'iPhone X', 'iPhone10,6': 'iPhone X',
+            'iPhone11,2': 'iPhone XS', 'iPhone11,4': 'iPhone XS Max', 'iPhone11,6': 'iPhone XS Max', 'iPhone11,8': 'iPhone XR',
+            'iPhone12,1': 'iPhone 11', 'iPhone12,3': 'iPhone 11 Pro', 'iPhone12,5': 'iPhone 11 Pro Max', 'iPhone12,8': 'iPhone SE (2nd)',
+            'iPhone13,1': 'iPhone 12 mini', 'iPhone13,2': 'iPhone 12', 'iPhone13,3': 'iPhone 12 Pro', 'iPhone13,4': 'iPhone 12 Pro Max',
+            'iPhone14,2': 'iPhone 13 Pro', 'iPhone14,3': 'iPhone 13 Pro Max', 'iPhone14,4': 'iPhone 13 mini', 'iPhone14,5': 'iPhone 13',
+            'iPhone14,6': 'iPhone SE (3rd)', 'iPhone14,7': 'iPhone 14', 'iPhone14,8': 'iPhone 14 Plus',
+            'iPhone15,2': 'iPhone 14 Pro', 'iPhone15,3': 'iPhone 14 Pro Max', 'iPhone15,4': 'iPhone 15', 'iPhone15,5': 'iPhone 15 Plus',
+            'iPhone16,1': 'iPhone 15 Pro', 'iPhone16,2': 'iPhone 15 Pro Max',
+            'iPhone17,1': 'iPhone 16 Pro', 'iPhone17,2': 'iPhone 16 Pro Max', 'iPhone17,3': 'iPhone 16', 'iPhone17,4': 'iPhone 16 Plus',
+            'iPhone17,5': 'iPhone 16e',
+            'iPhone18,1': 'iPhone 17 Pro', 'iPhone18,2': 'iPhone 17 Pro Max',
+            'iPhone18,3': 'iPhone 17', 'iPhone18,4': 'iPhone 17 Plus',
+            'iPhone18,5': 'iPhone 17 Air', 'iPhone18,6': 'iPhone 17e',
+            // iPad
+            'iPad6,3': 'iPad Pro 9.7"', 'iPad6,4': 'iPad Pro 9.7"', 'iPad6,7': 'iPad Pro 12.9"', 'iPad6,8': 'iPad Pro 12.9"',
+            'iPad6,11': 'iPad (5th)', 'iPad6,12': 'iPad (5th)',
+            'iPad7,1': 'iPad Pro 12.9" (2nd)', 'iPad7,2': 'iPad Pro 12.9" (2nd)', 'iPad7,3': 'iPad Pro 10.5"', 'iPad7,4': 'iPad Pro 10.5"',
+            'iPad7,5': 'iPad (6th)', 'iPad7,6': 'iPad (6th)', 'iPad7,11': 'iPad (7th)', 'iPad7,12': 'iPad (7th)',
+            'iPad8,1': 'iPad Pro 11"', 'iPad8,2': 'iPad Pro 11"', 'iPad8,3': 'iPad Pro 11"', 'iPad8,4': 'iPad Pro 11"',
+            'iPad8,5': 'iPad Pro 12.9" (3rd)', 'iPad8,6': 'iPad Pro 12.9" (3rd)', 'iPad8,7': 'iPad Pro 12.9" (3rd)', 'iPad8,8': 'iPad Pro 12.9" (3rd)',
+            'iPad8,9': 'iPad Pro 11" (2nd)', 'iPad8,10': 'iPad Pro 11" (2nd)', 'iPad8,11': 'iPad Pro 12.9" (4th)', 'iPad8,12': 'iPad Pro 12.9" (4th)',
+            'iPad11,1': 'iPad mini (5th)', 'iPad11,2': 'iPad mini (5th)', 'iPad11,3': 'iPad Air (3rd)', 'iPad11,4': 'iPad Air (3rd)',
+            'iPad11,6': 'iPad (8th)', 'iPad11,7': 'iPad (8th)',
+            'iPad12,1': 'iPad (9th)', 'iPad12,2': 'iPad (9th)',
+            'iPad13,1': 'iPad Air (4th)', 'iPad13,2': 'iPad Air (4th)',
+            'iPad13,4': 'iPad Pro 11" (3rd)', 'iPad13,5': 'iPad Pro 11" (3rd)', 'iPad13,6': 'iPad Pro 11" (3rd)', 'iPad13,7': 'iPad Pro 11" (3rd)',
+            'iPad13,8': 'iPad Pro 12.9" (5th)', 'iPad13,9': 'iPad Pro 12.9" (5th)', 'iPad13,10': 'iPad Pro 12.9" (5th)', 'iPad13,11': 'iPad Pro 12.9" (5th)',
+            'iPad13,16': 'iPad Air (5th)', 'iPad13,17': 'iPad Air (5th)', 'iPad13,18': 'iPad (10th)', 'iPad13,19': 'iPad (10th)',
+            'iPad14,1': 'iPad mini (6th)', 'iPad14,2': 'iPad mini (6th)',
+            'iPad14,3': 'iPad Pro 11" (4th)', 'iPad14,4': 'iPad Pro 11" (4th)', 'iPad14,5': 'iPad Pro 12.9" (6th)', 'iPad14,6': 'iPad Pro 12.9" (6th)',
+            'iPad14,8': 'iPad Air 11" (M2)', 'iPad14,9': 'iPad Air 11" (M2)', 'iPad14,10': 'iPad Air 13" (M2)', 'iPad14,11': 'iPad Air 13" (M2)',
+            'iPad16,1': 'iPad mini (A17 Pro)', 'iPad16,2': 'iPad mini (A17 Pro)',
+            'iPad16,3': 'iPad Pro 11" (M4)', 'iPad16,4': 'iPad Pro 11" (M4)', 'iPad16,5': 'iPad Pro 13" (M4)', 'iPad16,6': 'iPad Pro 13" (M4)',
+            // Mac (for Catalyst / Designed for iPad)
+            'arm64': 'Mac (Apple Silicon)',
+        };
+
+        function deviceName(model) {
+            return DEVICE_NAMES[model] || model;
+        }
+
+        // ISO 3166 alpha-2 country code → flag emoji. Pure unicode trick:
+        // each ASCII letter A–Z maps to a regional-indicator symbol; pasted
+        // together they render as a flag. No table needed.
+        function countryFlag(code) {
+            if (!code || code.length !== 2) return '';
+            const A = 0x1F1E6;
+            const a = 'A'.charCodeAt(0);
+            const c = code.toUpperCase();
+            return String.fromCodePoint(A + c.charCodeAt(0) - a)
+                 + String.fromCodePoint(A + c.charCodeAt(1) - a);
+        }
+
+        // ISO 3166 alpha-2 → display name via Intl. Falls back to the raw
+        // code if the browser doesn't have it (very rare).
+        const _countryNameCache = {};
+        const _displayNames = (typeof Intl !== 'undefined' && Intl.DisplayNames)
+            ? new Intl.DisplayNames(['en'], { type: 'region' })
+            : null;
+        function countryName(code) {
+            if (!code) return '';
+            if (_countryNameCache[code]) return _countryNameCache[code];
+            let name = code;
+            if (_displayNames) {
+                try { name = _displayNames.of(code) || code; } catch (e) {}
+            }
+            _countryNameCache[code] = name;
+            return name;
+        }
+
+        // Toggle a burst cluster open/closed in the Capture Timeline. Bound
+        // inline via onclick on the header row; rows belonging to a cluster
+        // share a class equal to its id.
+        function toggleCluster(clusterId, headerEl) {
+            const rows = document.querySelectorAll('tr.cluster-row.' + clusterId);
+            if (!rows.length) return;
+            const isOpen = rows[0].style.display !== 'none';
+            rows.forEach(r => { r.style.display = isOpen ? 'none' : 'table-row'; });
+            const arrow = headerEl && headerEl.querySelector('.cluster-arrow');
+            if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+        }
+
+        // Wire up "Show internal" toggle. Flip state, persist, and re-render
+        // from the cached response — no refetch needed.
+        const internalToggle = document.getElementById('internal-toggle');
+        internalToggle.checked = showInternal;
+        internalToggle.addEventListener('change', (e) => {
+            showInternal = e.target.checked;
+            localStorage.setItem('showInternal', String(showInternal));
+            if (cachedRows) renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary);
+        });
+
+        // Load on start
+        fetchData();
+    </script>
+</body>
+</html>
