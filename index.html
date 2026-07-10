@@ -276,11 +276,24 @@
             color: #555;
             transition: transform 0.15s;
         }
-        tr.cluster-row td {
-            background: #0d0d0d;
-            border-left: 2px solid #2a2a2a;
+        /* Expanded groups read as ONE block: the header pins to the top of
+           the viewport while its children scroll (needs overflow:visible on
+           the timeline's .table-card, set inline), and a brand accent runs
+           down the whole group's left edge. */
+        tr.cluster-header.open td {
+            position: sticky; top: 0; z-index: 5;
+            background: #1c1c1c;
+            color: #ccc;
+            border-left: 2px solid #ED9B61;
+            border-bottom: 1px solid #2a2a2a;
         }
-        tr.cluster-row td:first-child { padding-left: 24px; }
+        tr.cluster-row td {
+            background: #101010;
+        }
+        tr.cluster-row td:first-child {
+            border-left: 2px solid #ED9B61;
+            padding-left: 24px;
+        }
 
         .loading {
             text-align: center;
@@ -431,6 +444,30 @@
                 flex-shrink: 0;
             }
             #tab-timeline tr.cluster-header td { display: block; }
+
+            /* Expanded cluster = one continuous card: the header keeps only
+               its top corners and sticks to the viewport top; children glue
+               underneath with no gaps; the last child closes the card. */
+            #tab-timeline tr.cluster-header.open {
+                border-radius: 12px 12px 0 0;
+                margin-bottom: 0;
+                border-bottom: none;
+                border-left: 2px solid #ED9B61;
+                background: #1c1c1c;
+                position: sticky; top: 0; z-index: 5;
+            }
+            #tab-timeline tr.cluster-row {
+                border-radius: 0;
+                margin-bottom: 0;
+                border-top: none;
+                border-left: 2px solid #ED9B61;
+                background: #141414;
+            }
+            #tab-timeline tr.cluster-row:has(+ tr:not(.cluster-row)),
+            #tab-timeline tr.cluster-row:last-child {
+                border-radius: 0 0 12px 12px;
+                margin-bottom: 10px;
+            }
         }
         /* Capture Timeline: clickable rows + detail modal */
         #tab-timeline tbody tr.tl-click { cursor: pointer; }
@@ -1545,7 +1582,7 @@
                 ? `${startedCount} started · ${savedCount} saved (${completionPct}%) · ${captureRows.length} total captures`
                 : `${captureRows.length} captures`;
 
-            let html = '<div class="table-card" style="max-width:900px;margin:0 auto 32px">';
+            let html = '<div class="table-card" style="max-width:900px;margin:0 auto 32px;overflow:visible">';
             html += `<h3>Capture Timeline <span style="color:#555;font-weight:400;font-size:13px">· ${summaryLine} · tap a row for details</span></h3>`;
             html += '<table><thead><tr>';
             html += '<th>Time</th><th>Device</th><th>Outcome</th><th>Last step</th><th>Duration</th>';
@@ -1861,6 +1898,7 @@
             // desktop, block card on the mobile layout) instead of forcing
             // table-row, which broke the stacked mobile rows.
             rows.forEach(r => { r.style.display = isOpen ? 'none' : ''; });
+            if (headerEl) headerEl.classList.toggle('open', !isOpen);
             const arrow = headerEl && headerEl.querySelector('.cluster-arrow');
             if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
         }
