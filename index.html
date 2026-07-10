@@ -621,6 +621,8 @@
             const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
             const stepRank = Object.fromEntries(stepOrder.map((s, i) => [s, i]));
             const verCol = header.indexOf('appVersion');
+            const countryCol = header.indexOf('country');
+            const tzCol = header.indexOf('timezone');
 
             // Group rows by sessionId, tracking earliest timestamp per step
             // plus the device + any abandonedAt marker.
@@ -641,6 +643,8 @@
                         deviceId: deviceCol >= 0 ? row[deviceCol] : null,
                         deviceModel: modelCol >= 0 ? row[modelCol] : null,
                         appVersion: null,
+                        country: null,
+                        timezone: null,
                         stepTs: {},
                         abandonedAt: null
                     });
@@ -658,6 +662,12 @@
                 }
                 if (verCol >= 0 && row[verCol] && !s.appVersion) {
                     s.appVersion = row[verCol];
+                }
+                if (countryCol >= 0 && row[countryCol] && !s.country) {
+                    s.country = row[countryCol];
+                }
+                if (tzCol >= 0 && row[tzCol] && !s.timezone) {
+                    s.timezone = row[tzCol];
                 }
             }
 
@@ -682,6 +692,8 @@
                     deviceId: s.deviceId,
                     deviceModel: s.deviceModel,
                     appVersion: s.appVersion,
+                    country: s.country,
+                    timezone: s.timezone,
                     startedAt,
                     lastStep,
                     lastTs,
@@ -1576,6 +1588,13 @@
                     || (deviceId ? deviceModels[deviceId] : null);
                 const modelLabel = modelCode ? deviceName(modelCode) : '—';
 
+                const country = (c && c['country']) || (s && s.country) || null;
+                const tz = (c && c['timezone']) || (s && s.timezone) || null;
+                const flag = country ? countryFlag(country) + ' ' : '';
+                const tzCity = tz && tz.includes('/')
+                    ? tz.split('/').slice(1).join('/').replace(/_/g, ' ')
+                    : (tz || null);
+
                 // --- Detail modal content, pre-built so the row only needs
                 // an index. Everything that used to be its own column
                 // (type / category / die-cut / from / version) lives here,
@@ -1583,7 +1602,7 @@
                 const when = new Date(r.sortTs);
                 const fullTime = when.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                 let detail = `<h4>${outcomeBadge}${internalBadge}</h4>`;
-                detail += `<div class="tl-modal-sub">${fullTime} · ${modelLabel}</div>`;
+                detail += `<div class="tl-modal-sub">${fullTime} · ${flag}${modelLabel}</div>`;
                 if (s && s.stepTs) {
                     // The sheet logs a literal 'abandoned' step when the user
                     // NEXT opens the app — hours later. The synthetic red line
@@ -1613,8 +1632,8 @@
                     dRow('Die-cut', (c['isDieCut'] === true || c['isDieCut'] === 'TRUE') ? 'Yes' : null);
                     dRow('From filled in', (c['hasFromPerson'] === true || c['hasFromPerson'] === 'TRUE') ? 'Yes' : null);
                     dRow('OS', c['osVersion']);
-                    dRow('Locale', [c['country'], c['timezone']].filter(Boolean).join(' · '));
                 }
+                dRow('Location', [country ? `${countryFlag(country)} ${countryName(country)}` : null, tzCity].filter(Boolean).join(' · '));
                 dRow('Build', (c && c['appVersion']) || (s && s.appVersion));
                 dRow('Device', modelLabel + (modelCode && modelLabel !== modelCode ? ` <span style="color:#666">${modelCode}</span>` : ''));
                 dRow('Device ID', deviceId ? `<span title="${deviceId}">${deviceId.slice(0, 8)}…</span>` : null);
@@ -1628,7 +1647,7 @@
 
                 return `<tr class="${cls}"${styleAttr} onclick="showTlDetail(${detailIdx})">
                     <td data-label="Time">${time}${internalBadge}</td>
-                    <td data-label="Device">${modelLabel}</td>
+                    <td data-label="Device">${flag}${modelLabel}</td>
                     <td data-label="Outcome">${outcomeBadge}</td>
                     <td data-label="Last step">${lastLabel}</td>
                     <td data-label="Duration">${durationStr}</td>
@@ -1673,7 +1692,10 @@
                 const modelCode = (sampleSession && sampleSession.deviceModel)
                     || (sampleCapture && sampleCapture['deviceModel'])
                     || (dId ? deviceModels[dId] : null);
-                const modelLabel = modelCode ? deviceName(modelCode) : '—';
+                const clusterCountry = (sampleSession && sampleSession.country)
+                    || (sampleCapture && sampleCapture['country']) || null;
+                const clusterFlag = clusterCountry ? countryFlag(clusterCountry) + ' ' : '';
+                const modelLabel = (modelCode ? deviceName(modelCode) : '—');
                 const internalBadge = isInternal
                     ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>'
                     : (isReview ? ' <span class="badge" style="background:#2a201a;color:#ba9b6b">APP REVIEW</span>' : '');
@@ -1695,7 +1717,7 @@
                     <td colspan="5">
                         <span class="cluster-arrow">▶</span>
                         <strong style="color:#ccc">${cRows.length} sessions</strong> in a burst${internalBadge}
-                        <span style="color:#666"> · ${newestTime} · span ${spanLabel} · ${modelLabel}</span>
+                        <span style="color:#666"> · ${newestTime} · span ${spanLabel} · ${clusterFlag}${modelLabel}</span>
                         <span style="color:#666"> · ${outcomeBits.join(' · ') || '—'}${stepBit}</span>
                     </td>
                 </tr>`;
