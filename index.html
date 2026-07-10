@@ -432,6 +432,42 @@
             }
             #tab-timeline tr.cluster-header td { display: block; }
         }
+        /* Capture Timeline: clickable rows + detail modal */
+        #tab-timeline tbody tr.tl-click { cursor: pointer; }
+        #tab-timeline tbody tr.tl-click:hover { background: #1d1d1d; }
+        .tl-modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+            z-index: 200; display: flex; align-items: center; justify-content: center;
+            padding: 20px;
+        }
+        .tl-modal {
+            background: #191919; border: 1px solid #2e2e2e; border-radius: 16px;
+            width: 100%; max-width: 440px; max-height: 85vh; overflow-y: auto;
+            padding: 20px 22px; box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+        }
+        .tl-modal h4 { margin: 0 0 6px; font-size: 16px; color: #eee; display: flex; align-items: center; gap: 8px; }
+        .tl-modal-sub { color: #777; font-size: 12px; margin-bottom: 14px; }
+        .tl-modal-close {
+            float: right; background: #242424; border: none; color: #aaa;
+            width: 30px; height: 30px; border-radius: 15px; font-size: 14px; cursor: pointer;
+        }
+        .tl-modal-close:hover { background: #2e2e2e; color: #fff; }
+        .tl-detail-row {
+            display: flex; justify-content: space-between; gap: 16px;
+            padding: 9px 0; border-bottom: 1px solid #222;
+            font-size: 13px; color: #888;
+        }
+        .tl-detail-row:last-child { border-bottom: none; }
+        .tl-detail-row strong { color: #ddd; font-weight: 500; text-align: right; word-break: break-word; }
+        .tl-steps { margin: 4px 0 12px; padding: 10px 14px; background: #131313; border-radius: 10px; }
+        .tl-step { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; color: #ccc; }
+        .tl-step-dot { width: 8px; height: 8px; border-radius: 4px; background: #6bba6b; flex: none; }
+        .tl-step-ts { margin-left: auto; color: #666; font-size: 12px; font-variant-numeric: tabular-nums; }
+        @media (max-width: 640px) {
+            /* Bottom-sheet feel on phones */
+            .tl-modal-overlay { align-items: flex-end; padding: 0; }
+            .tl-modal { border-radius: 16px 16px 0 0; max-width: none; max-height: 88vh; }
+        }
     </style>
 </head>
 <body>
@@ -584,6 +620,7 @@
 
             const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
             const stepRank = Object.fromEntries(stepOrder.map((s, i) => [s, i]));
+            const verCol = header.indexOf('appVersion');
 
             // Group rows by sessionId, tracking earliest timestamp per step
             // plus the device + any abandonedAt marker.
@@ -603,6 +640,7 @@
                         sessionId: sid,
                         deviceId: deviceCol >= 0 ? row[deviceCol] : null,
                         deviceModel: modelCol >= 0 ? row[modelCol] : null,
+                        appVersion: null,
                         stepTs: {},
                         abandonedAt: null
                     });
@@ -617,6 +655,9 @@
                 }
                 if (abandonedCol >= 0 && row[abandonedCol] && !s.abandonedAt) {
                     s.abandonedAt = row[abandonedCol];
+                }
+                if (verCol >= 0 && row[verCol] && !s.appVersion) {
+                    s.appVersion = row[verCol];
                 }
             }
 
@@ -640,12 +681,14 @@
                     sessionId: s.sessionId,
                     deviceId: s.deviceId,
                     deviceModel: s.deviceModel,
+                    appVersion: s.appVersion,
                     startedAt,
                     lastStep,
                     lastTs,
                     durationMs: lastTs - startedAt,
                     completed: lastStep === 'saved',
-                    abandonedAt: s.abandonedAt
+                    abandonedAt: s.abandonedAt,
+                    stepTs: s.stepTs
                 });
             }
 
@@ -1394,6 +1437,7 @@
             sessions = sessions || [];
             captureRows = captureRows || [];
             deviceModels = deviceModels || {};
+            tlDetails = [];
 
             const stepLabels = {
                 started: 'Started',
@@ -1489,10 +1533,10 @@
                 ? `${startedCount} started · ${savedCount} saved (${completionPct}%) · ${captureRows.length} total captures`
                 : `${captureRows.length} captures`;
 
-            let html = '<div class="table-card" style="max-width:1200px;margin:0 auto 32px">';
-            html += `<h3>Capture Timeline <span style="color:#555;font-weight:400;font-size:13px">· ${summaryLine}</span></h3>`;
+            let html = '<div class="table-card" style="max-width:900px;margin:0 auto 32px">';
+            html += `<h3>Capture Timeline <span style="color:#555;font-weight:400;font-size:13px">· ${summaryLine} · tap a row for details</span></h3>`;
             html += '<table><thead><tr>';
-            html += '<th>Time</th><th>Outcome</th><th>Last step</th><th>Duration</th><th>Type</th><th>Category</th><th>Die-Cut</th><th>From</th><th>Model</th><th>Version</th>';
+            html += '<th>Time</th><th>Device</th><th>Outcome</th><th>Last step</th><th>Duration</th>';
             html += '</tr></thead><tbody>';
 
             // Render one row in the timeline. extraClass lets the caller
@@ -1522,25 +1566,9 @@
                 let durationStr = '—';
                 if (s) {
                     lastLabel = stepLabels[s.lastStep] || s.lastStep;
-                    if (!s.completed && s.abandonedAt && s.abandonedAt !== s.lastStep) {
-                        lastLabel += ` <span style="color:#666;font-size:11px">(exit: ${stepLabels[s.abandonedAt] || s.abandonedAt})</span>`;
-                    }
                     durationStr = s.durationMs > 0 ? formatDuration(s.durationMs) : '—';
-                }
-
-                let typeCell = '—';
-                let cat = '—';
-                let diecut = '—';
-                let from = '—';
-                let version = '—';
-                if (c) {
-                    const type = c['cardType'] || '—';
-                    typeCell = type !== '—' ? `<span class="badge badge-${type}">${type}</span>` : '—';
-                    cat = c['category'] || '—';
-                    diecut = (c['isDieCut'] === true || c['isDieCut'] === 'TRUE')
-                        ? '<span class="badge badge-diecut">Die-Cut</span>' : '—';
-                    from = (c['hasFromPerson'] === true || c['hasFromPerson'] === 'TRUE') ? 'Yes' : '—';
-                    version = c['appVersion'] || '—';
+                } else {
+                    lastLabel = 'Capture only';
                 }
 
                 const modelCode = (s && s.deviceModel)
@@ -1548,21 +1576,62 @@
                     || (deviceId ? deviceModels[deviceId] : null);
                 const modelLabel = modelCode ? deviceName(modelCode) : '—';
 
-                const cls = extraClass ? ` class="${extraClass}"` : '';
+                // --- Detail modal content, pre-built so the row only needs
+                // an index. Everything that used to be its own column
+                // (type / category / die-cut / from / version) lives here,
+                // plus the per-step trace the table never had room for.
+                const when = new Date(r.sortTs);
+                const fullTime = when.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                let detail = `<h4>${outcomeBadge}${internalBadge}</h4>`;
+                detail += `<div class="tl-modal-sub">${fullTime} · ${modelLabel}</div>`;
+                if (s && s.stepTs) {
+                    // The sheet logs a literal 'abandoned' step when the user
+                    // NEXT opens the app — hours later. The synthetic red line
+                    // below covers it; the raw row would show "+4139m".
+                    const entries = Object.entries(s.stepTs)
+                        .filter(([step]) => step !== 'abandoned')
+                        .sort((a, b) => a[1] - b[1]);
+                    const t0 = entries.length ? entries[0][1] : 0;
+                    let steps = '';
+                    entries.forEach(([step, ms]) => {
+                        const off = ms - t0 === 0 ? 'start' : '+' + formatDuration(ms - t0);
+                        steps += `<div class="tl-step"><span class="tl-step-dot"></span>${stepLabels[step] || step}<span class="tl-step-ts">${off}</span></div>`;
+                    });
+                    if (!s.completed) {
+                        const exitLabel = s.abandonedAt ? ' at ' + (stepLabels[s.abandonedAt] || s.abandonedAt) : '';
+                        steps += `<div class="tl-step"><span class="tl-step-dot" style="background:#ba6b6b"></span>Abandoned${exitLabel}<span class="tl-step-ts"></span></div>`;
+                    }
+                    detail += `<div class="tl-steps">${steps}</div>`;
+                }
+                const dRows = [];
+                const dRow = (label, val) => { if (val) dRows.push(`<div class="tl-detail-row"><span>${label}</span><strong>${val}</strong></div>`); };
+                if (s && durationStr !== '—') dRow('Duration', durationStr);
+                if (c) {
+                    const type = c['cardType'];
+                    dRow('Card type', type ? `<span class="badge badge-${type}">${type}</span>` : null);
+                    dRow('Category', c['category']);
+                    dRow('Die-cut', (c['isDieCut'] === true || c['isDieCut'] === 'TRUE') ? 'Yes' : null);
+                    dRow('From filled in', (c['hasFromPerson'] === true || c['hasFromPerson'] === 'TRUE') ? 'Yes' : null);
+                    dRow('OS', c['osVersion']);
+                    dRow('Locale', [c['country'], c['timezone']].filter(Boolean).join(' · '));
+                }
+                dRow('Build', (c && c['appVersion']) || (s && s.appVersion));
+                dRow('Device', modelLabel + (modelCode && modelLabel !== modelCode ? ` <span style="color:#666">${modelCode}</span>` : ''));
+                dRow('Device ID', deviceId ? `<span title="${deviceId}">${deviceId.slice(0, 8)}…</span>` : null);
+                if (!s && c) dRow('Note', 'Capture without a funnel session (older build)');
+                detail += dRows.join('');
+                const detailIdx = tlDetails.push(detail) - 1;
+
+                const cls = 'tl-click' + (extraClass ? ` ${extraClass}` : '');
                 const style = (extraClass ? 'display:none;' : '') + opacity;
                 const styleAttr = style ? ` style="${style}"` : '';
 
-                return `<tr${cls}${styleAttr}>
+                return `<tr class="${cls}"${styleAttr} onclick="showTlDetail(${detailIdx})">
                     <td data-label="Time">${time}${internalBadge}</td>
+                    <td data-label="Device">${modelLabel}</td>
                     <td data-label="Outcome">${outcomeBadge}</td>
                     <td data-label="Last step">${lastLabel}</td>
                     <td data-label="Duration">${durationStr}</td>
-                    <td data-label="Type">${typeCell}</td>
-                    <td data-label="Category">${cat}</td>
-                    <td data-label="Die-cut">${diecut}</td>
-                    <td data-label="From">${from}</td>
-                    <td data-label="Model">${modelLabel}</td>
-                    <td data-label="Version">${version}</td>
                 </tr>`;
             }
 
@@ -1623,7 +1692,7 @@
                 const opacity = isInternal ? 'opacity:0.5;' : '';
 
                 html += `<tr class="cluster-header" data-cluster-id="${clusterId}" onclick="toggleCluster('${clusterId}', this)" style="${opacity}">
-                    <td colspan="10">
+                    <td colspan="5">
                         <span class="cluster-arrow">▶</span>
                         <strong style="color:#ccc">${cRows.length} sessions</strong> in a burst${internalBadge}
                         <span style="color:#666"> · ${newestTime} · span ${spanLabel} · ${modelLabel}</span>
@@ -1773,6 +1842,34 @@
             const arrow = headerEl && headerEl.querySelector('.cluster-arrow');
             if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
         }
+
+        // Capture Timeline detail modal. renderTimeline pre-builds each
+        // row's detail HTML into tlDetails; the row's onclick opens it by
+        // index. The overlay lives on <body>, so re-renders of #content
+        // never clobber an open modal.
+        let tlDetails = [];
+        function showTlDetail(i) {
+            const d = tlDetails[i];
+            if (!d) return;
+            let overlay = document.getElementById('tl-modal-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'tl-modal-overlay';
+                overlay.className = 'tl-modal-overlay';
+                overlay.addEventListener('click', e => { if (e.target === overlay) closeTlDetail(); });
+                document.body.appendChild(overlay);
+            }
+            overlay.innerHTML = `<div class="tl-modal">
+                <button class="tl-modal-close" onclick="closeTlDetail()" aria-label="Close">✕</button>
+                ${d}
+            </div>`;
+            overlay.style.display = 'flex';
+        }
+        function closeTlDetail() {
+            const overlay = document.getElementById('tl-modal-overlay');
+            if (overlay) overlay.style.display = 'none';
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTlDetail(); });
 
         // Wire up "Show internal" toggle. Flip state, persist, and re-render
         // from the cached response — no refetch needed.
