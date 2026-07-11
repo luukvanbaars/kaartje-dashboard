@@ -660,6 +660,7 @@
             const verCol = header.indexOf('appVersion');
             const countryCol = header.indexOf('country');
             const tzCol = header.indexOf('timezone');
+            const planCol = header.indexOf('plan');
 
             // Group rows by sessionId, tracking earliest timestamp per step
             // plus the device + any abandonedAt marker.
@@ -682,6 +683,7 @@
                         appVersion: null,
                         country: null,
                         timezone: null,
+                        plan: null,
                         stepTs: {},
                         abandonedAt: null
                     });
@@ -705,6 +707,9 @@
                 }
                 if (tzCol >= 0 && row[tzCol] && !s.timezone) {
                     s.timezone = row[tzCol];
+                }
+                if (planCol >= 0 && row[planCol] && !s.plan) {
+                    s.plan = row[planCol];
                 }
             }
 
@@ -731,6 +736,7 @@
                     appVersion: s.appVersion,
                     country: s.country,
                     timezone: s.timezone,
+                    plan: s.plan,
                     startedAt,
                     lastStep,
                     lastTs,
@@ -911,6 +917,12 @@
             return html;
         }
 
+        // Plan (tier) display metadata. `plan` arrives on every event from
+        // build 461+ — free / tier20 / tier100 / unlimited.
+        const PLAN_ORDER = ['free', 'tier20', 'tier100', 'unlimited'];
+        const PLAN_LABELS = { free: 'Free', tier20: 'Up to 20', tier100: 'Up to 100', unlimited: 'Unlimited' };
+        const PLAN_COLORS = { free: '#8a8a8a', tier20: '#6b8bba', tier100: '#6bba6b', unlimited: '#ED9B61' };
+
         const INTERNAL_DEVICES = new Set([
             '103DF45F-718F-475C-A0AF-BC0D50CD4ECB',
             '693AEA1A-4BAE-46A9-B3E3-FC9FA2C202A3',
@@ -1052,22 +1064,30 @@
             // counts once, and funnel rows get the internal filter that
             // capture rows already had.
             const deviceInfo = {};
-            const noteDevice = (id, model, country, tz) => {
+            const noteDevice = (id, model, country, tz, plan, ts) => {
                 if (!id) return;
                 if (!showInternal && isFilteredDevice(id)) return;
                 const e = deviceInfo[id] || (deviceInfo[id] = {});
                 if (model && !e.model) e.model = model;
                 if (country && !e.country) e.country = country;
                 if (tz && !e.tz) e.tz = tz;
+                // Plan: LATEST wins (unlike the identity fields above) — a
+                // device that upgraded should count under its current plan.
+                if (plan) {
+                    const ms = ts ? new Date(ts).getTime() : 0;
+                    if (e.planTs == null || ms >= e.planTs) { e.plan = plan; e.planTs = ms; }
+                }
             };
-            data.forEach(d => noteDevice(d['deviceId'], d['deviceModel'], d['country'], d['timezone']));
+            data.forEach(d => noteDevice(d['deviceId'], d['deviceModel'], d['country'], d['timezone'], d['plan'], d['timestamp']));
             if (funnelRows && funnelRows.length > 1) {
                 const fh = funnelRows[0];
                 const dI = fh.indexOf('deviceId'), mI = fh.indexOf('deviceModel'),
-                      cI = fh.indexOf('country'), tzI = fh.indexOf('timezone');
+                      cI = fh.indexOf('country'), tzI = fh.indexOf('timezone'),
+                      pI = fh.indexOf('plan'), tsI = fh.indexOf('timestamp');
                 for (let i = 1; i < funnelRows.length; i++) {
                     const r = funnelRows[i];
-                    noteDevice(r[dI], mI >= 0 ? r[mI] : null, cI >= 0 ? r[cI] : null, tzI >= 0 ? r[tzI] : null);
+                    noteDevice(r[dI], mI >= 0 ? r[mI] : null, cI >= 0 ? r[cI] : null, tzI >= 0 ? r[tzI] : null,
+                               pI >= 0 ? r[pI] : null, tsI >= 0 ? r[tsI] : null);
                 }
             }
 
@@ -1241,6 +1261,31 @@
                 }
 
                 html += '</div>';
+            }
+
+            // Plans — distinct devices by the LAST plan we saw them on.
+            // Forward-only: fills in as builds that log `plan` (461+) ship;
+            // devices on older builds simply don't appear here.
+            const planCounts = {};
+            Object.values(deviceInfo).forEach(e => {
+                if (e.plan) planCounts[e.plan] = (planCounts[e.plan] || 0) + 1;
+            });
+            if (Object.keys(planCounts).length) {
+                html += '<div class="chart-card">';
+                html += '<h3>Plans <span style="color:#555;font-weight:400;font-size:13px">· distinct devices, latest known plan</span></h3>';
+                const maxPlan = Math.max(...Object.values(planCounts));
+                html += '<div class="bar-chart">';
+                PLAN_ORDER.forEach(plan => {
+                    const count = planCounts[plan];
+                    if (!count) return;
+                    const pct = (count / maxPlan * 100).toFixed(1);
+                    html += `<div class="bar-row">
+                        <div class="bar-label" style="width:160px">${PLAN_LABELS[plan] || plan}</div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${PLAN_COLORS[plan] || '#8a8a8a'}"></div></div>
+                        <div class="bar-count">${count}</div>
+                    </div>`;
+                });
+                html += '</div></div>';
             }
 
             html += '</div>';
@@ -1671,6 +1716,8 @@
                     dRow('OS', c['osVersion']);
                 }
                 dRow('Location', [country ? `${countryFlag(country)} ${countryName(country)}` : null, tzCity].filter(Boolean).join(' · '));
+                const plan = (c && c['plan']) || (s && s.plan) || null;
+                dRow('Plan', plan ? (PLAN_LABELS[plan] || plan) : null);
                 dRow('Build', (c && c['appVersion']) || (s && s.appVersion));
                 dRow('Device', modelLabel + (modelCode && modelLabel !== modelCode ? ` <span style="color:#666">${modelCode}</span>` : ''));
                 dRow('Device ID', deviceId ? `<span title="${deviceId}">${deviceId.slice(0, 8)}…</span>` : null);
