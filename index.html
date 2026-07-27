@@ -911,11 +911,28 @@
         /// burst on day one doesn't imply that pace forever. Devices with
         /// one capture, or all captures inside a single day, have no
         /// meaningful slope — they read "—" instead of a fake date.
-        function renderLeaderboard(rows, deviceInfo) {
+        function renderLeaderboard(rows, deviceInfo, funnelRows) {
             if (!rows || rows.length < 2) return '';
             const h = rows[0];
             const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp');
             if (dI < 0 || tI < 0) return '';
+
+            // Deletions per device (`cardDeleted`, build 459+). The app's cap
+            // counts the LIVE library, so a capture total alone drifts high
+            // for anyone who prunes. Subtracting these tracks the real thing.
+            const deletions = {};
+            if (funnelRows && funnelRows.length > 1) {
+                const fh = funnelRows[0];
+                const fs = fh.indexOf('step'), fd = fh.indexOf('deviceId');
+                if (fs >= 0 && fd >= 0) {
+                    for (let i = 1; i < funnelRows.length; i++) {
+                        if (funnelRows[i][fs] === 'cardDeleted') {
+                            const id = funnelRows[i][fd];
+                            if (id) deletions[id] = (deletions[id] || 0) + 1;
+                        }
+                    }
+                }
+            }
 
             const stats = {};
             for (let i = 1; i < rows.length; i++) {
@@ -945,17 +962,21 @@
                 const planLabel = plan ? (PLAN_LABELS[plan] || plan) : '—';
                 const planColor = plan ? (PLAN_COLORS[plan] || '#8a8a8a') : '#555';
                 const cap = plan ? PLAN_CAPS[plan] : undefined;
+                // Live library estimate = captures − known deletions. Floors
+                // at 0 (deletions of pre-459 captures have no matching row).
+                const deleted = deletions[id] || 0;
+                const net = Math.max(0, s.count - deleted);
 
                 // Capacity bar (unlimited = no ceiling to draw).
                 let capacityCell = '<span style="color:#555">—</span>';
                 if (cap) {
-                    const pct = Math.min(100, s.count / cap * 100);
-                    const over = s.count >= cap;
+                    const pct = Math.min(100, net / cap * 100);
+                    const over = net >= cap;
                     capacityCell = `<div style="display:flex;align-items:center;gap:8px">
                         <div style="flex:1;min-width:60px;height:6px;background:#222;border-radius:3px;overflow:hidden">
                             <div style="width:${pct.toFixed(0)}%;height:100%;background:${over ? '#ba6b6b' : planColor}"></div>
                         </div>
-                        <span style="color:#777;font-size:12px;white-space:nowrap">${s.count}/${cap}</span>
+                        <span style="color:#777;font-size:12px;white-space:nowrap">${net}/${cap}</span>
                     </div>`;
                 } else if (plan === 'unlimited') {
                     capacityCell = '<span style="color:#ED9B61;font-size:12px">no limit</span>';
@@ -977,7 +998,7 @@
                 let fillCell = '<span style="color:#555">—</span>';
                 if (plan === 'unlimited') {
                     fillCell = '<span style="color:#555">n/a</span>';
-                } else if (cap && s.count >= cap) {
+                } else if (cap && net >= cap) {
                     // Still the truth for a dormant device — and the most
                     // interesting kind: hit the wall, then stopped.
                     fillCell = '<span class="badge" style="background:#2a1a1a;color:#ba6b6b">At limit now</span>';
@@ -987,7 +1008,7 @@
                     // stopped capturing isn't approaching anything.
                     fillCell = '<span style="color:#555">dormant</span>';
                 } else if (cap && hasPace && perWeek > 0) {
-                    const weeksLeft = (cap - s.count) / perWeek;
+                    const weeksLeft = (cap - net) / perWeek;
                     const etaMs = s.last + weeksLeft * 7 * DAY;
                     const daysFromNow = Math.round((etaMs - now) / DAY);
                     if (daysFromNow <= 0) {
@@ -1009,7 +1030,9 @@
 
                 html += `<tr>
                     <td data-label="Device">${flag}${model}${idleNote}</td>
-                    <td data-label="Kaartjes"><strong style="color:#ddd">${s.count}</strong></td>
+                    <td data-label="Kaartjes"><strong style="color:#ddd">${net}</strong>${
+                        deleted ? ` <span style="color:#666;font-size:11px">· ${s.count} kept, ${deleted} deleted</span>` : ''
+                    }</td>
                     <td data-label="Plan"><span class="badge" style="background:#1c1c1c;color:${planColor}">${planLabel}</span></td>
                     <td data-label="Capacity">${capacityCell}</td>
                     <td data-label="Pace">${paceCell}</td>
@@ -1019,7 +1042,8 @@
 
             html += '</tbody></table>';
             html += '<div style="color:#666;font-size:12px;margin-top:12px;line-height:1.5">'
-                 + 'Counts are capture <em>events</em> — a deleted Kaartje still counts here but frees space in the app, so capacity can read high. '
+                 + 'Kaartjes = captures minus deletions, so it tracks the live library the plan cap measures. '
+                 + 'Deletions are only logged from build 459+, so pruning before that is invisible. '
                  + 'Plan is the last one seen (build 461+); devices on older builds show “—”.'
                  + '</div>';
             html += '</div>';
@@ -1271,7 +1295,7 @@
             // Who's actually using it, how full their plan is, and when
             // they'll hit the wall. Built from capture rows + the per-device
             // profile (model / country / latest plan) assembled above.
-            html += renderLeaderboard(rows, deviceInfo);
+            html += renderLeaderboard(rows, deviceInfo, funnelRows);
 
             // Funnel section (only if the new Apps Script has served data)
             if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
