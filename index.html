@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kaartje Dashboard</title>
+    <meta name="robots" content="noindex, nofollow">
     <link rel="icon" type="image/png" href="favicon.png">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -537,10 +538,63 @@
         let cachedFunnelRows = null;
         let cachedFunnelSummary = null;
 
+        // Access key. Deliberately NOT baked into this file — the page is
+        // publicly reachable, so a hard-coded key would be readable by
+        // anyone viewing source. The viewer enters it once; it lives in
+        // this browser's localStorage and rides along as a query param the
+        // Apps Script checks before returning any data.
+        const KEY_STORAGE = 'kaartjeDashKey';
+        function storedKey() {
+            const fromURL = new URLSearchParams(location.search).get('key');
+            if (fromURL) {
+                localStorage.setItem(KEY_STORAGE, fromURL);
+                // Strip it from the address bar so it isn't left in history
+                // or copied into a shared link by accident.
+                history.replaceState(null, '', location.pathname);
+                return fromURL;
+            }
+            return localStorage.getItem(KEY_STORAGE);
+        }
+        function promptForKey(message) {
+            const content = document.getElementById('content');
+            content.innerHTML = `<div class="loading" style="max-width:340px;margin:0 auto">
+                <div style="margin-bottom:14px">${message}</div>
+                <input id="dash-key" type="password" placeholder="Access key"
+                    style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid #2e2e2e;
+                           background:#161616;color:#eee;font-size:15px;text-align:center">
+                <button id="dash-key-go"
+                    style="margin-top:10px;width:100%;padding:11px;border:none;border-radius:10px;
+                           background:#ED9B61;color:#1a1a1a;font-weight:600;font-size:15px;cursor:pointer">
+                    Unlock
+                </button>
+            </div>`;
+            const go = () => {
+                const v = document.getElementById('dash-key').value.trim();
+                if (!v) return;
+                localStorage.setItem(KEY_STORAGE, v);
+                document.getElementById('content').innerHTML = '<div class="loading">Loading data</div>';
+                fetchData();
+            };
+            document.getElementById('dash-key-go').addEventListener('click', go);
+            document.getElementById('dash-key').addEventListener('keydown', e => {
+                if (e.key === 'Enter') go();
+            });
+        }
+
         async function fetchData() {
+            const key = storedKey();
+            if (!key) {
+                promptForKey('This dashboard is private.');
+                return;
+            }
             try {
-                const res = await fetch(ENDPOINT);
+                const res = await fetch(ENDPOINT + '?key=' + encodeURIComponent(key));
                 const json = await res.json();
+                if (json.status === 'unauthorized') {
+                    localStorage.removeItem(KEY_STORAGE);
+                    promptForKey('That key was not accepted.');
+                    return;
+                }
                 // New script returns funnelRows + funnelSummary; old script
                 // returns neither. funnelRows is what lets us recompute the
                 // summary client-side when the internal toggle flips.
