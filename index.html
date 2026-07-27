@@ -897,6 +897,135 @@
 
         // Monetization: paywall exposure → purchase, by tier. Counts distinct
         // devices on both sides so repeated paywall views don't dilute.
+        /// Per-device leaderboard + capacity forecast.
+        ///
+        /// The honest framing on "predicting a purchase": with a handful of
+        /// devices and no purchase history there is nothing to fit a model
+        /// to. What IS predictable is the mechanical part — when a device
+        /// FILLS ITS PLAN, which is the moment the paywall appears. So the
+        /// forecast answers "when does this person hit the wall?", the
+        /// leading indicator of a purchase decision, rather than pretending
+        /// to forecast the decision itself.
+        ///
+        /// Rate = captures per week over the device's active span, so a
+        /// burst on day one doesn't imply that pace forever. Devices with
+        /// one capture, or all captures inside a single day, have no
+        /// meaningful slope — they read "—" instead of a fake date.
+        function renderLeaderboard(rows, deviceInfo) {
+            if (!rows || rows.length < 2) return '';
+            const h = rows[0];
+            const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp');
+            if (dI < 0 || tI < 0) return '';
+
+            const stats = {};
+            for (let i = 1; i < rows.length; i++) {
+                const id = rows[i][dI];
+                if (!id || !deviceInfo[id]) continue;   // respects the internal/review filter
+                const ms = new Date(rows[i][tI]).getTime();
+                if (Number.isNaN(ms)) continue;
+                const s = stats[id] || (stats[id] = { count: 0, first: ms, last: ms });
+                s.count++;
+                s.first = Math.min(s.first, ms);
+                s.last = Math.max(s.last, ms);
+            }
+            const entries = Object.entries(stats).sort((a, b) => b[1].count - a[1].count);
+            if (!entries.length) return '';
+
+            const DAY = 86400000;
+            const now = Date.now();
+            let html = '<div class="table-card" style="max-width:900px;margin:0 auto 32px">';
+            html += '<h3>Device Leaderboard <span style="color:#555;font-weight:400;font-size:13px">· captures, plan, and when they fill it</span></h3>';
+            html += '<table><thead><tr><th>Device</th><th>Kaartjes</th><th>Plan</th><th>Capacity</th><th>Pace</th><th>Fills up</th></tr></thead><tbody>';
+
+            entries.forEach(([id, s]) => {
+                const info = deviceInfo[id] || {};
+                const model = info.model ? deviceName(info.model) : '—';
+                const flag = info.country ? countryFlag(info.country) + ' ' : '';
+                const plan = info.plan || null;
+                const planLabel = plan ? (PLAN_LABELS[plan] || plan) : '—';
+                const planColor = plan ? (PLAN_COLORS[plan] || '#8a8a8a') : '#555';
+                const cap = plan ? PLAN_CAPS[plan] : undefined;
+
+                // Capacity bar (unlimited = no ceiling to draw).
+                let capacityCell = '<span style="color:#555">—</span>';
+                if (cap) {
+                    const pct = Math.min(100, s.count / cap * 100);
+                    const over = s.count >= cap;
+                    capacityCell = `<div style="display:flex;align-items:center;gap:8px">
+                        <div style="flex:1;min-width:60px;height:6px;background:#222;border-radius:3px;overflow:hidden">
+                            <div style="width:${pct.toFixed(0)}%;height:100%;background:${over ? '#ba6b6b' : planColor}"></div>
+                        </div>
+                        <span style="color:#777;font-size:12px;white-space:nowrap">${s.count}/${cap}</span>
+                    </div>`;
+                } else if (plan === 'unlimited') {
+                    capacityCell = '<span style="color:#ED9B61;font-size:12px">no limit</span>';
+                }
+
+                // Weekly pace over the active span. A span under a day can't
+                // support a slope — one busy evening isn't a habit.
+                const spanDays = (s.last - s.first) / DAY;
+                const hasPace = s.count >= 2 && spanDays >= 1;
+                const perWeek = hasPace ? (s.count / spanDays) * 7 : null;
+                const paceCell = hasPace
+                    ? `${perWeek.toFixed(perWeek < 10 ? 1 : 0)}/wk`
+                    : '<span style="color:#555">—</span>';
+
+                // Forecast: remaining capacity ÷ pace, anchored to the LAST
+                // capture (not today) so a dormant device doesn't look like
+                // it's still climbing.
+                const idleDays = (now - s.last) / DAY;
+                let fillCell = '<span style="color:#555">—</span>';
+                if (plan === 'unlimited') {
+                    fillCell = '<span style="color:#555">n/a</span>';
+                } else if (cap && s.count >= cap) {
+                    // Still the truth for a dormant device — and the most
+                    // interesting kind: hit the wall, then stopped.
+                    fillCell = '<span class="badge" style="background:#2a1a1a;color:#ba6b6b">At limit now</span>';
+                } else if (idleDays >= 30) {
+                    // Extrapolating an old pace across months of silence
+                    // would render a past date as "due now". Someone who
+                    // stopped capturing isn't approaching anything.
+                    fillCell = '<span style="color:#555">dormant</span>';
+                } else if (cap && hasPace && perWeek > 0) {
+                    const weeksLeft = (cap - s.count) / perWeek;
+                    const etaMs = s.last + weeksLeft * 7 * DAY;
+                    const daysFromNow = Math.round((etaMs - now) / DAY);
+                    if (daysFromNow <= 0) {
+                        fillCell = '<span style="color:#ba9b6b">due now</span>';
+                    } else if (daysFromNow <= 90) {
+                        const label = daysFromNow < 14
+                            ? `~${daysFromNow}d`
+                            : `~${Math.round(daysFromNow / 7)}w`;
+                        fillCell = `<span style="color:#ccc">${label}</span>`;
+                    } else {
+                        fillCell = '<span style="color:#555">&gt; 3 months</span>';
+                    }
+                }
+
+                const idle = Math.round((now - s.last) / DAY);
+                const idleNote = idle >= 14
+                    ? ` <span style="color:#555;font-size:11px">· idle ${idle}d</span>`
+                    : '';
+
+                html += `<tr>
+                    <td data-label="Device">${flag}${model}${idleNote}</td>
+                    <td data-label="Kaartjes"><strong style="color:#ddd">${s.count}</strong></td>
+                    <td data-label="Plan"><span class="badge" style="background:#1c1c1c;color:${planColor}">${planLabel}</span></td>
+                    <td data-label="Capacity">${capacityCell}</td>
+                    <td data-label="Pace">${paceCell}</td>
+                    <td data-label="Fills up">${fillCell}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            html += '<div style="color:#666;font-size:12px;margin-top:12px;line-height:1.5">'
+                 + 'Counts are capture <em>events</em> — a deleted Kaartje still counts here but frees space in the app, so capacity can read high. '
+                 + 'Plan is the last one seen (build 461+); devices on older builds show “—”.'
+                 + '</div>';
+            html += '</div>';
+            return html;
+        }
+
         function renderMonetizationSection(u) {
             const seen = usageStat(u, 'paywallShown').devices;
             const t20 = usageStat(u, 'purchased_tier20').devices;
@@ -922,6 +1051,9 @@
         const PLAN_ORDER = ['free', 'tier20', 'tier100', 'unlimited'];
         const PLAN_LABELS = { free: 'Free', tier20: 'Up to 20', tier100: 'Up to 100', unlimited: 'Unlimited' };
         const PLAN_COLORS = { free: '#8a8a8a', tier20: '#6b8bba', tier100: '#6bba6b', unlimited: '#ED9B61' };
+        /// Card capacity per plan — mirrors ScanLimitService.defaultFreeScanLimit
+        /// and UnlockTier.cardLimit in the app. Keep in sync if those change.
+        const PLAN_CAPS = { free: 5, tier20: 20, tier100: 100, unlimited: null };
 
         const INTERNAL_DEVICES = new Set([
             '103DF45F-718F-475C-A0AF-BC0D50CD4ECB',
@@ -1135,6 +1267,11 @@
                 html += renderFrictionSection(usage, effectiveFunnelSummary);
                 html += renderMonetizationSection(usage);
             }
+
+            // Who's actually using it, how full their plan is, and when
+            // they'll hit the wall. Built from capture rows + the per-device
+            // profile (model / country / latest plan) assembled above.
+            html += renderLeaderboard(rows, deviceInfo);
 
             // Funnel section (only if the new Apps Script has served data)
             if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
