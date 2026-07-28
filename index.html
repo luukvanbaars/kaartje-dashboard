@@ -629,6 +629,7 @@
             const sessionCol = header.indexOf('sessionId');
             const stepCol = header.indexOf('step');
             const deviceCol = header.indexOf('deviceId');
+            const verCol = header.indexOf('appVersion');
             if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return empty;
 
             // Group rows into sessions, capturing the earliest timestamp per
@@ -637,6 +638,11 @@
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
                 if (!showInternal && deviceCol >= 0 && isFilteredDevice(row[deviceCol])) continue;
+                // Era gate: pre-491 rows describe a different flow.
+                if (verCol >= 0) {
+                    const b = buildNumber(row[verCol]);
+                    if (b !== null && b < FUNNEL_MIN_BUILD) continue;
+                }
                 const sid = row[sessionCol];
                 const step = row[stepCol];
                 const ts = row[tsCol];
@@ -650,7 +656,7 @@
                 }
             }
 
-            const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
+            const stepOrder = ['started', 'captureAttempted', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
             const transitionTimes = {}; // key 'a→b' → [durations in ms]
             const endToEndTimes = [];
 
@@ -709,7 +715,7 @@
             const abandonedCol = header.indexOf('abandonedAt');
             if (tsCol < 0 || sessionCol < 0 || stepCol < 0) return [];
 
-            const stepOrder = ['started', 'typeChosen', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
+            const stepOrder = ['started', 'captureAttempted', 'outsideScanned', 'previewReached', 'categorizeReached', 'saved'];
             const stepRank = Object.fromEntries(stepOrder.map((s, i) => [s, i]));
             const verCol = header.indexOf('appVersion');
             const countryCol = header.indexOf('country');
@@ -829,10 +835,16 @@
             const stepCol = header.indexOf('step');
             const abandonedCol = header.indexOf('abandonedAt');
             const deviceCol = header.indexOf('deviceId');
+            const verCol = header.indexOf('appVersion');
 
             for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
                 if (!showInternal && deviceCol >= 0 && isFilteredDevice(row[deviceCol])) continue;
+                // Era gate: pre-491 rows describe a different flow.
+                if (verCol >= 0) {
+                    const b = buildNumber(row[verCol]);
+                    if (b !== null && b < FUNNEL_MIN_BUILD) continue;
+                }
 
                 const step = row[stepCol];
                 if (step) perStep[step] = (perStep[step] || 0) + 1;
@@ -1132,6 +1144,18 @@
         /// Card capacity per plan — mirrors ScanLimitService.defaultFreeScanLimit
         /// and UnlockTier.cardLimit in the app. Keep in sync if those change.
         const PLAN_CAPS = { free: 5, tier20: 20, tier100: 100, unlimited: null };
+
+        // The scan flow has been rebuilt twice, and each rebuild changed what
+        // the steps MEAN. Mixing eras produced a phantom 41% cliff at a step
+        // that no longer exists — so every funnel view is pinned to builds
+        // running the CURRENT flow + fixed instrumentation (491+).
+        // Raise this whenever the scan flow's steps change again.
+        const FUNNEL_MIN_BUILD = 491;
+        /// "3.0 (479)" → 479. Null when the build can't be read.
+        function buildNumber(appVersion) {
+            const m = /\((\d+)\)/.exec(String(appVersion || ''));
+            return m ? parseInt(m[1], 10) : null;
+        }
 
         const INTERNAL_DEVICES = new Set([
             '103DF45F-718F-475C-A0AF-BC0D50CD4ECB',
@@ -1633,10 +1657,30 @@
         }
 
         function renderFunnelSection(summary, durations) {
+            // Everything filtered out by the era gate → say so plainly. A
+            // funnel of zeros reads as a broken dashboard; this reads as
+            // "waiting for data from the current build", which is the truth.
+            const gatedEmpty = !summary || !summary.perStep
+                || Object.keys(summary.perStep).length === 0;
+            if (gatedEmpty) {
+                return `<div class="table-card" style="max-width:900px;margin:0 auto 32px">
+                    <h3>Scan Funnel</h3>
+                    <div style="color:#888;font-size:14px;line-height:1.6;padding:8px 0">
+                        No sessions yet from build ${FUNNEL_MIN_BUILD}+.<br>
+                        <span style="color:#666;font-size:13px">
+                        The scan flow and its instrumentation were rebuilt, so older
+                        sessions measured different things — mixing them produced a
+                        phantom drop-off at a step that no longer exists. This funnel
+                        deliberately shows only the current flow and fills in as
+                        testers update. Individual older sessions are still in the
+                        Capture timeline tab.</span>
+                    </div>
+                </div>`;
+            }
             const stepOrder = [
-                { key: 'started', label: 'Started' },
-                { key: 'typeChosen', label: 'Type chosen' },
-                { key: 'outsideScanned', label: 'Outside scanned' },
+                { key: 'started', label: 'Camera opened' },
+                { key: 'captureAttempted', label: 'Shutter pressed' },
+                { key: 'outsideScanned', label: 'Front accepted' },
                 { key: 'previewReached', label: 'Preview reached' },
                 { key: 'categorizeReached', label: 'Categorize' },
                 { key: 'saved', label: 'Saved' }
@@ -1750,7 +1794,8 @@
 
             const stepLabels = {
                 started: 'Started',
-                typeChosen: 'Type chosen',
+                captureAttempted: 'Shutter pressed',
+                typeChosen: 'Type chosen (retired)',
                 outsideScanned: 'Outside scanned',
                 previewReached: 'Preview reached',
                 categorizeReached: 'Categorize',
