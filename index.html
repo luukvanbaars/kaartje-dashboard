@@ -537,6 +537,8 @@
         let cachedRows = null;
         let cachedFunnelRows = null;
         let cachedFunnelSummary = null;
+        let cachedShareSummary = null;
+        let cachedShareRows = null;
 
         // Access key. Deliberately NOT baked into this file — the page is
         // publicly reachable, so a hard-coded key would be readable by
@@ -602,13 +604,16 @@
                     cachedRows = json.rows;
                     cachedFunnelRows = json.funnelRows || null;
                     cachedFunnelSummary = json.funnelSummary || null;
-                    renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary);
+                    cachedShareSummary = json.shareSummary || null;
+                    cachedShareRows = json.shareRows || null;
+                    renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary,
+                                    cachedShareSummary, cachedShareRows);
                 } else {
                     document.getElementById('content').innerHTML = '<div class="loading">No data yet — scan some cards!</div>';
                     document.getElementById('subtitle').textContent = 'No captures recorded';
                 }
             } catch (err) {
-                document.getElementById('content').innerHTML = `<div class="loading">Error loading data: ${err.message}</div>`;
+                document.getElementById('content').innerHTML = `<div class="loading">Error loading data: ${esc(err.message)}</div>`;
             }
         }
 
@@ -961,8 +966,6 @@
             return html;
         }
 
-        // Monetization: paywall exposure → purchase, by tier. Counts distinct
-        // devices on both sides so repeated paywall views don't dilute.
         /// Per-device leaderboard + capacity forecast.
         ///
         /// The honest framing on "predicting a purchase": with a handful of
@@ -1022,10 +1025,10 @@
 
             entries.forEach(([id, s]) => {
                 const info = deviceInfo[id] || {};
-                const model = info.model ? deviceName(info.model) : '—';
+                const model = info.model ? esc(deviceName(info.model)) : '—';
                 const flag = info.country ? countryFlag(info.country) + ' ' : '';
                 const plan = info.plan || null;
-                const planLabel = plan ? (PLAN_LABELS[plan] || plan) : '—';
+                const planLabel = plan ? esc(PLAN_LABELS[plan] || plan) : '—';
                 const planColor = plan ? (PLAN_COLORS[plan] || '#8a8a8a') : '#555';
                 const cap = plan ? PLAN_CAPS[plan] : undefined;
                 // Live library estimate = captures − known deletions. Floors
@@ -1116,23 +1119,285 @@
             return html;
         }
 
-        function renderMonetizationSection(u) {
-            const seen = usageStat(u, 'paywallShown').devices;
-            const t20 = usageStat(u, 'purchased_tier20').devices;
-            const t100 = usageStat(u, 'purchased_tier100').devices;
-            const unl = usageStat(u, 'purchased_unlimited').devices;
-            const buyers = new Set([...t20, ...t100, ...unl]);
-            if (seen.size === 0 && buyers.size === 0) return '';
-            const conv = seen.size ? (buyers.size / seen.size * 100).toFixed(1) : '—';
+        // ---- Paywall -----------------------------------------------------
+        // Who opened the paywall, through which door, what they looked at,
+        // and who paid. From build 650 every paywall event carries a VISIT id
+        // (sessionId, one per time the sheet is shown), a `detail` (the door
+        // or the tier) and `env` (debug / testflight / appstore) — see
+        // AnalyticsService.logEvent(_:sessionId:detail:) for the list. Older
+        // builds logged only a daily `paywallShown` and `purchased_*`, with
+        // no door and no env; those still count, door unknown.
+
+        /// App Store releases, by build. Only consulted for rows from builds
+        /// before 650, which don't say where they're running: a device that
+        /// ever ran a build NOT listed here is a TestFlight tester, so its
+        /// purchases were free sandbox ones. From 650 the `env` column says
+        /// it outright, so this list never needs to grow.
+        const APP_STORE_BUILDS = new Set([643, 647]);
+
+        const PAYWALL_DOORS = {
+            limit: 'Hit the card limit',
+            badge: '“Free left” badge',
+            widget: 'Locked widget',
+            importFull: 'Import, plan full',
+            moments: 'Creating a moment',
+            unknown: 'Older build (no door)'
+        };
+        const PAYWALL_TIERS = ['tier20', 'tier100', 'unlimited'];
+        const PAYWALL_STEPS = new Set([
+            'paywallShown', 'paywallOpened', 'paywallTierViewed', 'purchaseStarted',
+            'purchaseCancelled', 'purchasePending', 'purchaseFailed',
+            'purchaseArrived', 'refunded', 'restoreResult'
+        ]);
+
+        /// Text from the sheet goes into innerHTML, and the write endpoint is
+        /// open to anyone — escape whatever didn't come from this file.
+        function esc(v) {
+            return String(v == null ? '' : v).replace(/[&<>"']/g, ch =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+        }
+
+        function summarizePaywall(funnelRows, captureRows) {
+            const mk = () => ({
+                opened: new Set(), viewed: new Set(), started: new Set(), bought: new Set(),
+                cancelled: new Set(), refunded: new Set(), arrived: new Set(),
+                byTier: Object.fromEntries(PAYWALL_TIERS.map(t => [t,
+                    { viewed: new Set(), started: new Set(), bought: new Set(), cancelled: new Set() }])),
+                doorOpened: {}, doorBought: {}
+            });
+            const out = { devices: {}, agg: { appstore: mk(), test: mk() }, hasDetail: false };
+            if (!funnelRows || funnelRows.length < 2) return out;
+            const h = funnelRows[0];
+            const sI = h.indexOf('step'), dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'),
+                  sidI = h.indexOf('sessionId'), detI = h.indexOf('detail'), envI = h.indexOf('env'),
+                  vI = h.indexOf('appVersion');
+            if (sI < 0 || dI < 0) return out;
+            out.hasDetail = detI >= 0;
+
+            // Pre-650 rows: a device that ran any non-App-Store build is a tester.
+            const testerByBuild = new Set();
+            const noteBuild = (id, ver) => {
+                const b = buildNumber(ver);
+                if (id && b !== null && !APP_STORE_BUILDS.has(b)) testerByBuild.add(id);
+            };
+            if (vI >= 0) for (let i = 1; i < funnelRows.length; i++) noteBuild(funnelRows[i][dI], funnelRows[i][vI]);
+            if (captureRows && captureRows.length > 1) {
+                const cd = captureRows[0].indexOf('deviceId'), cv = captureRows[0].indexOf('appVersion');
+                if (cd >= 0 && cv >= 0) for (let i = 1; i < captureRows.length; i++) noteBuild(captureRows[i][cd], captureRows[i][cv]);
+            }
+            const rowEnv = (r, id) => {
+                const e = envI >= 0 ? r[envI] : '';
+                if (e === 'appstore') return 'appstore';
+                if (e === 'testflight' || e === 'debug') return 'test';
+                return testerByBuild.has(id) ? 'test' : 'appstore';
+            };
+
+            const visits = {};      // visit id → { door, env }
+            const purchases = [];   // for door attribution once every visit is known
+            for (let i = 1; i < funnelRows.length; i++) {
+                const r = funnelRows[i];
+                const step = r[sI];
+                const bought = typeof step === 'string' && step.startsWith('purchased_');
+                if (!step || !(bought || PAYWALL_STEPS.has(step))) continue;
+                const id = r[dI];
+                if (!id || (!showInternal && isFilteredDevice(id))) continue;
+                const ts = tI >= 0 ? r[tI] : null;
+                const ms = ts ? ((ts instanceof Date) ? ts.getTime() : new Date(ts).getTime()) : NaN;
+                const env = rowEnv(r, id);
+                const a = out.agg[env];
+                const sid = sidI >= 0 ? String(r[sidI] || '') : '';
+                const detail = detI >= 0 ? String(r[detI] || '') : '';
+                const d = out.devices[id] || (out.devices[id] = {
+                    id, envs: new Set(), opens: 0, legacyDays: 0, doors: {},
+                    viewed: new Set(), started: new Set(), bought: [], cancelled: new Set(),
+                    pending: new Set(), failed: new Set(), arrived: [], refunded: [],
+                    restored: null, first: null, last: null
+                });
+                d.envs.add(env);
+                if (!Number.isNaN(ms)) {
+                    d.first = d.first == null ? ms : Math.min(d.first, ms);
+                    d.last = d.last == null ? ms : Math.max(d.last, ms);
+                }
+                const tier = PAYWALL_TIERS.includes(detail) ? detail : null;
+
+                if (bought) {
+                    const t = step.slice('purchased_'.length);
+                    d.bought.push({ tier: t, ms, env });
+                    a.bought.add(id);
+                    if (a.byTier[t]) a.byTier[t].bought.add(id);
+                    purchases.push({ id, sid, env });
+                    continue;
+                }
+                switch (step) {
+                    case 'paywallShown':          // pre-650 daily pulse: no visit, no door
+                        d.legacyDays++;
+                        a.opened.add(id);
+                        (a.doorOpened.unknown = a.doorOpened.unknown || new Set()).add(id);
+                        break;
+                    case 'paywallOpened': {
+                        const door = detail || 'unknown';
+                        d.opens++;
+                        d.doors[door] = (d.doors[door] || 0) + 1;
+                        a.opened.add(id);
+                        (a.doorOpened[door] = a.doorOpened[door] || new Set()).add(id);
+                        if (sid) visits[sid] = { door, env };
+                        break;
+                    }
+                    case 'paywallTierViewed':
+                        if (tier) { d.viewed.add(tier); a.viewed.add(id); a.byTier[tier].viewed.add(id); }
+                        break;
+                    case 'purchaseStarted':
+                        if (tier) { d.started.add(tier); a.started.add(id); a.byTier[tier].started.add(id); }
+                        break;
+                    case 'purchaseCancelled':
+                        d.cancelled.add(tier || '?');
+                        a.cancelled.add(id);
+                        if (tier) a.byTier[tier].cancelled.add(id);
+                        break;
+                    case 'purchasePending': d.pending.add(tier || '?'); break;
+                    case 'purchaseFailed':  d.failed.add(tier || '?'); break;
+                    case 'purchaseArrived': d.arrived.push({ tier: detail, ms, env }); a.arrived.add(id); break;
+                    case 'refunded':        d.refunded.push({ tier: detail, ms, env }); a.refunded.add(id); break;
+                    case 'restoreResult':   d.restored = detail; break;
+                }
+            }
+            // Each purchase goes to the door its visit came through; pre-650
+            // purchases have no visit, so "unknown".
+            purchases.forEach(p => {
+                const door = (p.sid && visits[p.sid]) ? visits[p.sid].door : 'unknown';
+                const a = out.agg[p.env];
+                (a.doorBought[door] = a.doorBought[door] || new Set()).add(p.id);
+            });
+            return out;
+        }
+
+        function renderPaywallSection(pw, deviceInfo) {
+            const ids = Object.keys(pw.devices);
+            if (!ids.length) return '';
+            const A = pw.agg.appstore, T = pw.agg.test;
+            const pct = (n, d) => d ? `${(n / d * 100).toFixed(0)}%` : '—';
+            // Cancelled at Apple's sheet and never bought.
+            const walkedAway = new Set([...A.cancelled].filter(id => !A.bought.has(id)));
+
             let html = '<div class="chart-card" style="margin-bottom:24px">';
-            html += '<h3>Monetization<span style="color:#555;font-weight:400"> · distinct devices</span></h3>';
+            html += '<h3>Paywall<span style="color:#555;font-weight:400"> · App Store devices — TestFlight purchases are free, so they\'re kept apart below</span></h3>';
             html += '<div class="stats-grid">';
-            html += statCard('Saw the paywall', seen.size, 'all-time devices');
-            html += statCard('Purchased', buyers.size, `${conv}% of paywall viewers`);
-            html += statCard('Up to 20', t20.size, 'tier purchases');
-            html += statCard('Up to 100', t100.size, 'tier purchases');
-            html += statCard('Unlimited', unl.size, 'tier purchases');
-            html += '</div></div>';
+            html += statCard('Opened the paywall', A.opened.size, 'distinct devices');
+            html += statCard('Bought a tier', A.bought.size, `${pct(A.bought.size, A.opened.size)} of those who opened it`);
+            html += statCard('Tapped buy', A.started.size, 'build 650+');
+            html += statCard('Cancelled at checkout', walkedAway.size, 'and didn\'t buy after');
+            html += statCard('Refunded', A.refunded.size, 'devices');
+            html += '</div>';
+
+            // Funnel: opened → turned a card over → tapped buy → bought.
+            const steps = [
+                { label: 'Opened the paywall', n: A.opened.size },
+                { label: 'Turned a card over', n: A.viewed.size },
+                { label: 'Tapped buy', n: A.started.size },
+                { label: 'Bought', n: A.bought.size }
+            ];
+            const N = A.opened.size;
+            if (N) {
+                html += '<div class="bar-chart" style="margin-top:20px">';
+                steps.forEach(st => {
+                    const w = N ? Math.min(100, st.n / N * 100) : 0;
+                    html += `<div class="bar-row">
+                        <div class="bar-label" style="width:150px">${st.label}</div>
+                        <div class="bar-track"><div class="bar-fill" style="width:${w.toFixed(1)}%;background:#ED9B61;opacity:${0.4 + w / 200}"></div></div>
+                        <div class="bar-count" style="width:120px">${st.n} <span style="color:#555">(${pct(st.n, N)})</span></div>
+                    </div>`;
+                });
+                html += '</div>';
+            }
+
+            // Doors: where the paywall was opened from, and which led to a purchase.
+            const doors = Object.keys(A.doorOpened)
+                .sort((x, y) => A.doorOpened[y].size - A.doorOpened[x].size);
+            if (doors.length) {
+                html += '<h3 style="margin-top:24px">Where they opened it</h3>';
+                html += '<table><thead><tr><th>Door</th><th>Opened</th><th>Bought</th><th>Conversion</th></tr></thead><tbody>';
+                doors.forEach(door => {
+                    const o = A.doorOpened[door].size, b = (A.doorBought[door] || new Set()).size;
+                    html += `<tr><td data-label="Door">${esc(PAYWALL_DOORS[door] || door)}</td>
+                        <td data-label="Opened">${o}</td><td data-label="Bought">${b}</td>
+                        <td data-label="Conversion">${pct(b, o)}</td></tr>`;
+                });
+                html += '</tbody></table>';
+            }
+
+            // Tiers: interest against purchases.
+            html += '<h3 style="margin-top:24px">By tier</h3>';
+            html += '<table><thead><tr><th>Tier</th><th>Turned over</th><th>Tapped buy</th><th>Bought</th><th>Cancelled</th></tr></thead><tbody>';
+            PAYWALL_TIERS.forEach(t => {
+                const x = A.byTier[t];
+                html += `<tr><td data-label="Tier"><span class="badge" style="background:#1c1c1c;color:${PLAN_COLORS[t]}">${PLAN_LABELS[t]}</span></td>
+                    <td data-label="Turned over">${x.viewed.size}</td><td data-label="Tapped buy">${x.started.size}</td>
+                    <td data-label="Bought"><strong style="color:#ddd">${x.bought.size}</strong></td>
+                    <td data-label="Cancelled">${x.cancelled.size}</td></tr>`;
+            });
+            html += '</tbody></table>';
+
+            html += `<div style="color:#666;font-size:12px;margin-top:14px;line-height:1.5">
+                TestFlight &amp; Debug: <strong style="color:#999">${T.opened.size}</strong> opened the paywall,
+                <strong style="color:#999">${T.bought.size}</strong> “bought” — free sandbox purchases, not revenue.
+                Counts are distinct devices. Doors, card turns, buy taps and cancels are logged from build 650${pw.hasDetail ? '' : ' — <span style="color:#ba9b6b">but the sheet has no <code>detail</code> column yet: redeploy google_apps_script.js</span>'}.
+                Rows from older builds don't say where they ran; a device that ever ran a TestFlight-only build counts as a tester.
+            </div>`;
+            html += '</div>';
+
+            // Who: one row per device that opened the paywall or bought.
+            const fmtDate = ms => (ms == null || Number.isNaN(ms)) ? '—'
+                : new Date(ms).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+            const tierName = t => esc(PLAN_LABELS[t] || t);
+            const outcome = d => {
+                const last = arr => arr.reduce((m, x) => (m && m.ms > x.ms) ? m : x, null);
+                const pill = (bg, fg, text) => `<span class="badge" style="background:${bg};color:${fg}">${text}</span>`;
+                if (d.refunded.length) return pill('#2a1a1a', '#ba6b6b', `Refunded ${tierName(last(d.refunded).tier)}`);
+                if (d.bought.length) {
+                    const b = last(d.bought);
+                    return pill('#1a2a1a', '#6bba6b', `Bought ${tierName(b.tier)}`) + ` <span style="color:#666;font-size:11px">${fmtDate(b.ms)}</span>`;
+                }
+                if (d.arrived.length) return pill('#1a2a1a', '#6bba6b', `Got ${tierName(last(d.arrived).tier)} elsewhere`);
+                if (d.pending.size) return pill('#2a241a', '#ba9b6b', 'Pending (Ask to Buy?)');
+                if (d.cancelled.size) return pill('#2a241a', '#ba9b6b', 'Cancelled at checkout');
+                if (d.failed.size) return pill('#2a1a1a', '#ba6b6b', 'Purchase failed');
+                if (d.restored && d.restored !== 'free' && d.restored !== 'failed') return pill('#1c1c1c', '#999', `Restored ${tierName(d.restored)}`);
+                return '<span style="color:#666">No purchase</span>';
+            };
+            const rows = ids.map(id => pw.devices[id]).sort((x, y) => (y.last || 0) - (x.last || 0));
+            html += '<div class="table-card" style="max-width:900px;margin:0 auto 32px">';
+            html += `<h3>Paywall visitors <span style="color:#555;font-weight:400;font-size:13px">· ${rows.length} device${rows.length === 1 ? '' : 's'}, most recent first</span></h3>`;
+            html += '<table><thead><tr><th>Device</th><th>Where from</th><th>Visits</th><th>Looked at</th><th>Outcome</th><th>Plan now</th><th>Last</th></tr></thead><tbody>';
+            rows.forEach(d => {
+                const info = deviceInfo[d.id] || {};
+                const flag = info.country ? countryFlag(info.country) + ' ' : '';
+                const model = info.model ? esc(deviceName(info.model)) : '—';
+                const tester = !d.envs.has('appstore')
+                    ? ' <span class="badge" style="background:#1c1c1c;color:#6b8bba">TestFlight</span>' : '';
+                const doors = Object.entries(d.doors).sort((x, y) => y[1] - x[1])
+                    .map(([k, n]) => esc(PAYWALL_DOORS[k] || k) + (n > 1 ? ` ×${n}` : '')).join(' · ');
+                const where = doors || '<span style="color:#555">older build</span>';
+                // Older builds logged a once-a-day pulse, not each visit.
+                const days = n => `${n} day${n === 1 ? '' : 's'}`;
+                const visitsCell = !d.legacyDays ? String(d.opens)
+                    : d.opens ? `${d.opens} <span style="color:#555;font-size:11px">+ ${days(d.legacyDays)} on older builds</span>`
+                    : `<span style="color:#999">${days(d.legacyDays)}</span> <span style="color:#555;font-size:11px">older builds</span>`;
+                const looked = d.viewed.size ? [...d.viewed].map(tierName).join(', ') : '<span style="color:#555">—</span>';
+                const plan = info.plan || null;
+                const planCell = plan
+                    ? `<span class="badge" style="background:#1c1c1c;color:${PLAN_COLORS[plan] || '#8a8a8a'}">${esc(PLAN_LABELS[plan] || plan)}</span>`
+                    : '<span style="color:#555">—</span>';
+                html += `<tr>
+                    <td data-label="Device">${flag}${model}${tester}</td>
+                    <td data-label="Where from">${where}</td>
+                    <td data-label="Visits">${visitsCell}</td>
+                    <td data-label="Looked at">${looked}</td>
+                    <td data-label="Outcome">${outcome(d)}</td>
+                    <td data-label="Plan now">${planCell}</td>
+                    <td data-label="Last">${fmtDate(d.last)}</td>
+                </tr>`;
+            });
+            html += '</tbody></table></div>';
             return html;
         }
 
@@ -1214,8 +1479,10 @@
             localStorage.setItem('dashTab', name);
             const ov = document.getElementById('tab-overview');
             const tl = document.getElementById('tab-timeline');
+            const sh = document.getElementById('tab-sharing');
             if (ov) ov.style.display = name === 'overview' ? '' : 'none';
             if (tl) tl.style.display = name === 'timeline' ? '' : 'none';
+            if (sh) sh.style.display = name === 'sharing' ? '' : 'none';
             document.querySelectorAll('.tab-btn').forEach(b =>
                 b.classList.toggle('active', b.dataset.tab === name));
         }
@@ -1224,7 +1491,7 @@
         // previous choice. Read eagerly so the checkbox reflects it on init.
         let showInternal = localStorage.getItem('showInternal') === 'true';
 
-        function renderDashboard(rows, funnelRows, funnelSummary) {
+        function renderDashboard(rows, funnelRows, funnelSummary, shareSummary, shareRows) {
             REVIEW_DEVICES = computeReviewDevices(rows, funnelRows);
             const headers = rows[0];
             const allData = rows.slice(1).map(row => {
@@ -1367,7 +1634,6 @@
                 const usage = summarizeUsage(funnelRows);
                 html += renderEngagementSection(usage);
                 html += renderFrictionSection(usage, effectiveFunnelSummary);
-                html += renderMonetizationSection(usage);
             }
 
             // Who's actually using it, how full their plan is, and when
@@ -1375,10 +1641,22 @@
             // profile (model / country / latest plan) assembled above.
             html += renderLeaderboard(rows, deviceInfo, funnelRows);
 
+            // Paywall: who opened it, through which door, and who paid —
+            // App Store purchases kept apart from TestFlight's free ones.
+            if (funnelRows) {
+                html += renderPaywallSection(summarizePaywall(funnelRows, rows), deviceInfo);
+            }
+
             // Funnel section (only if the new Apps Script has served data)
             if (effectiveFunnelSummary && effectiveFunnelSummary.perStep) {
                 html += renderFunnelSection(effectiveFunnelSummary, stepDurations);
             }
+
+            // Sharing is independent of the scan funnel and must NOT inherit
+            // its gate — the funnel hides itself for pre-FUNNEL_MIN_BUILD eras,
+            // and nesting sharing inside that would silently take the share
+            // numbers down with it for reasons that have nothing to do with them.
+            html += renderSharingSection(shareSummary);
 
             // Unified capture timeline — combines the per-session funnel data
             // (every started capture + where it ended + duration) with the
@@ -1417,7 +1695,7 @@
                 const pct = (count / maxCat * 100).toFixed(1);
                 const color = catColors[i % catColors.length];
                 html += `<div class="bar-row">
-                    <div class="bar-label">${name}</div>
+                    <div class="bar-label">${esc(name)}</div>
                     <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
                     <div class="bar-count">${count}</div>
                 </div>`;
@@ -1439,7 +1717,7 @@
             sortedModels.forEach(([name, count]) => {
                 const pct = (count / maxModel * 100).toFixed(1);
                 html += `<div class="bar-row">
-                    <div class="bar-label" style="width:120px">${name}</div>
+                    <div class="bar-label" style="width:120px">${esc(name)}</div>
                     <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#ED9B61"></div></div>
                     <div class="bar-count">${count}</div>
                 </div>`;
@@ -1472,7 +1750,7 @@
                     const flag = countryFlag(code);
                     const name = countryName(code);
                     html += `<div class="bar-row">
-                        <div class="bar-label" style="width:160px">${flag} ${name} <span style="color:#555">${code}</span></div>
+                        <div class="bar-label" style="width:160px">${flag} ${esc(name)} <span style="color:#555">${esc(code)}</span></div>
                         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#6b8bba"></div></div>
                         <div class="bar-count">${count}</div>
                     </div>`;
@@ -1491,7 +1769,7 @@
                         // space — "America/Toronto" → "Toronto".
                         const short = tz.includes('/') ? tz.split('/').slice(1).join('/').replace(/_/g, ' ') : tz;
                         html += `<div class="bar-row">
-                            <div class="bar-label" style="width:160px;font-size:12px">${short}</div>
+                            <div class="bar-label" style="width:160px;font-size:12px">${esc(short)}</div>
                             <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#6bba6b;opacity:0.6"></div></div>
                             <div class="bar-count">${count}</div>
                         </div>`;
@@ -1519,7 +1797,7 @@
                     if (!count) return;
                     const pct = (count / maxPlan * 100).toFixed(1);
                     html += `<div class="bar-row">
-                        <div class="bar-label" style="width:160px">${PLAN_LABELS[plan] || plan}</div>
+                        <div class="bar-label" style="width:160px">${esc(PLAN_LABELS[plan] || plan)}</div>
                         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${PLAN_COLORS[plan] || '#8a8a8a'}"></div></div>
                         <div class="bar-count">${count}</div>
                     </div>`;
@@ -1539,8 +1817,8 @@
                 const pct = (count / maxDay * 100).toFixed(1);
                 const label = day.slice(5); // MM-DD
                 html += `<div class="timeline-bar-wrapper">
-                    <div class="timeline-bar" style="height:${pct}%" title="${day}: ${count} cards"></div>
-                    <div class="timeline-label">${label}</div>
+                    <div class="timeline-bar" style="height:${pct}%" title="${esc(day)}: ${count} cards"></div>
+                    <div class="timeline-label">${esc(label)}</div>
                 </div>`;
             });
             html += '</div></div>';
@@ -1550,11 +1828,13 @@
             const tabBar = `<div class="tab-bar">
                 <button class="tab-btn" data-tab="overview" onclick="switchTab('overview')">Overview</button>
                 <button class="tab-btn" data-tab="timeline" onclick="switchTab('timeline')">Capture timeline</button>
+                <button class="tab-btn" data-tab="sharing" onclick="switchTab('sharing')">Sharing</button>
             </div>`;
             document.getElementById('content').innerHTML =
                 tabBar
                 + `<div id="tab-overview">${html}</div>`
-                + `<div id="tab-timeline" style="display:none">${timelineHtml}</div>`;
+                + `<div id="tab-timeline" style="display:none">${timelineHtml}</div>`
+                + `<div id="tab-sharing" style="display:none">${renderSharingTab(shareRows, shareSummary)}</div>`;
             switchTab(activeTab);
         }
 
@@ -1582,6 +1862,153 @@
             });
 
             return relative ? `${relative} <span style="color:#555">${timeStr}</span>` : timeStr;
+        }
+
+        // Sharing. Four magnitudes and one derived rate — deliberately NOT a
+        // chart, because four bars would be a chart pretending to be one. Tiles
+        // with the loop rate as the headline, and nothing encoded by colour, so
+        // the numbers wear the same ink tokens as everything else here.
+        function renderSharingSection(s) {
+            const noData = !s || ((s.sent || 0) === 0 && (s.imported || 0) === 0);
+            if (noData) {
+                // Say WHY it's empty. A grid of zeros reads as a broken
+                // dashboard; this reads as "waiting for data", which is true.
+                return `<div class="chart-card" style="margin-bottom:24px">
+                    <h3>Sharing<span style="color:#555;font-weight:400"> · .kaartje files sent and opened</span></h3>
+                    <div style="color:#888;font-size:14px;line-height:1.6;padding:8px 0">
+                        No shares yet.<br>
+                        <span style="color:#666;font-size:13px">
+                        Sharing shipped in build 543 as a 100-tier perk, so this fills
+                        in as testers on that build send cards. Every <em>shared</em>
+                        row should eventually pair with an <em>imported</em> row from
+                        whoever opened the file — that pairing is the entire reason to
+                        measure this.</span>
+                    </div>
+                </div>`;
+            }
+
+            const sent = s.sent || 0;
+            const imported = s.imported || 0;
+            const senders = s.sendingDevices || 0;
+            const importers = s.importingDevices || 0;
+            // Imports per share. Above 1.00 means each share lands more than
+            // once — the only number here that says whether sharing actually
+            // spreads the app rather than just being used.
+            const rateText = sent > 0 ? (imported / sent).toFixed(2) : '—';
+            const people = n => (n === 1 ? 'by 1 person' : 'by ' + n + ' people');
+
+            let html = '<div class="chart-card" style="margin-bottom:24px">';
+            html += '<h3>Sharing<span style="color:#555;font-weight:400"> · .kaartje files sent and opened</span></h3>';
+            html += '<div class="stats-grid">';
+            html += statCard('Cards shared', sent, people(senders));
+            html += statCard('Cards imported', imported, people(importers));
+            html += statCard('Imports per share', rateText,
+                             sent > 0 ? 'above 1.00 means it spreads' : 'needs a share first');
+            html += '</div>';
+            html += '</div>';
+            return html;
+        }
+
+        // The Sharing tab: one row per hand-off. A TABLE, not a chart —
+        // "who sent what to whom" is identity lookup, and no chart form
+        // answers that. The summary tiles sit on top for context.
+        //
+        // Pairs are joined on `shareId`, which the sender mints, writes INTO
+        // the .kaartje file, and logs; the recipient reads it back out of the
+        // file and logs the same one. Timestamp proximity was the obvious
+        // alternative and is wrong the moment two people share at once.
+        function renderSharingTab(shareRows, shareSummary) {
+            let html = renderSharingSection(shareSummary);
+            if (!shareRows || shareRows.length < 2) return html;
+
+            const h = shareRows[0];
+            const col = n => h.indexOf(n);
+            const iTime = col('timestamp'), iDev = col('deviceId'), iAct = col('action');
+            const iType = col('cardType'), iCat = col('category'), iTier = col('tier');
+            const iModel = col('deviceModel'), iCountry = col('country');
+            const iPlan = col('plan'), iShare = col('shareId');
+
+            const who = r => {
+                const model = iModel >= 0 ? (r[iModel] || '?') : '?';
+                const id = String(r[iDev] || '').slice(0, 8);
+                const cc = iCountry >= 0 && r[iCountry] ? ' · ' + r[iCountry] : '';
+                return esc(model) + '<span style="color:#555"> · ' + esc(id + cc) + '</span>';
+            };
+            const when = r => formatTime(new Date(r[iTime]));
+            const gap = (a, b) => {
+                const secs = Math.round((new Date(b[iTime]) - new Date(a[iTime])) / 1000);
+                if (secs < 0) return '—';
+                if (secs < 90) return secs + 's';
+                if (secs < 5400) return Math.round(secs / 60) + 'm';
+                return Math.round(secs / 3600) + 'h';
+            };
+
+            const shares = [], imports = [];
+            for (let r = 1; r < shareRows.length; r++) {
+                (shareRows[r][iAct] === 'shared' ? shares : imports).push(shareRows[r]);
+            }
+
+            // Rows written before shareId existed carry a blank one. They're
+            // shown as unpairable rather than dropped or guessed at.
+            const byId = {};
+            imports.forEach(r => {
+                const id = iShare >= 0 ? String(r[iShare] || '') : '';
+                if (id) (byId[id] = byId[id] || []).push(r);
+            });
+            const pairedIds = {};
+
+            html += '<div class="table-card"><h3>Hand-offs'
+                 + '<span style="color:#555;font-weight:400;font-size:13px">'
+                 + ' · one row per share, joined to the imports it produced</span></h3>';
+            html += '<table><thead><tr><th>Sent</th><th>From</th><th>Tier</th>'
+                 + '<th>Card</th><th>Opened by</th><th>After</th></tr></thead><tbody>';
+
+            shares.slice().reverse().forEach(sr => {
+                const id = iShare >= 0 ? String(sr[iShare] || '') : '';
+                const opened = id ? (byId[id] || []) : [];
+                if (id) pairedIds[id] = true;
+                const card = esc(sr[iType] || '?') + (sr[iCat] ? '<span style="color:#555"> · ' + esc(sr[iCat]) + '</span>' : '');
+                if (opened.length === 0) {
+                    const note = id
+                        ? '<span style="color:#666">not opened yet</span>'
+                        : '<span style="color:#666">pre-545 share — not traceable</span>';
+                    html += '<tr><td>' + when(sr) + '</td><td>' + who(sr) + '</td><td>'
+                         + esc(sr[iTier] || '—') + '</td><td>' + card + '</td><td>' + note
+                         + '</td><td style="color:#555">—</td></tr>';
+                } else {
+                    opened.forEach((ir, k) => {
+                        html += '<tr><td>' + (k === 0 ? when(sr) : '') + '</td><td>'
+                             + (k === 0 ? who(sr) : '') + '</td><td>'
+                             + (k === 0 ? esc(sr[iTier] || '—') : '') + '</td><td>'
+                             + (k === 0 ? card : '') + '</td><td>' + who(ir)
+                             + (ir[iPlan] ? '<span style="color:#555"> · ' + esc(ir[iPlan]) + '</span>' : '')
+                             + '</td><td>' + gap(sr, ir) + '</td></tr>';
+                    });
+                }
+            });
+            html += '</tbody></table></div>';
+
+            // Imports with no share we can see: pre-545 files, or a sender
+            // whose share row never arrived. Worth surfacing — a pile of
+            // these means shares are being logged unreliably.
+            const orphans = imports.filter(r => {
+                const id = iShare >= 0 ? String(r[iShare] || '') : '';
+                return !id || !pairedIds[id];
+            });
+            if (orphans.length) {
+                html += '<div class="table-card" style="margin-top:24px"><h3>Imports with no matching share'
+                     + '<span style="color:#555;font-weight:400;font-size:13px">'
+                     + ' · files sent before build 545, or a share that never logged</span></h3>';
+                html += '<table><thead><tr><th>Opened</th><th>By</th><th>Plan</th><th>Card</th></tr></thead><tbody>';
+                orphans.slice().reverse().forEach(r => {
+                    html += '<tr><td>' + when(r) + '</td><td>' + who(r) + '</td><td>'
+                         + esc(r[iPlan] || '—') + '</td><td>' + esc(r[iType] || '?')
+                         + (r[iCat] ? '<span style="color:#555"> · ' + esc(r[iCat]) + '</span>' : '')
+                         + '</td></tr>';
+                });
+                html += '</tbody></table></div>';
+            }
+            return html;
         }
 
         function statCard(label, value, sub) {
@@ -1944,7 +2371,7 @@
                 const when = new Date(r.sortTs);
                 const fullTime = when.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                 let detail = `<h4>${outcomeBadge}${internalBadge}</h4>`;
-                detail += `<div class="tl-modal-sub">${fullTime} · ${flag}${modelLabel}</div>`;
+                detail += `<div class="tl-modal-sub">${fullTime} · ${flag}${esc(modelLabel)}</div>`;
                 if (s && s.stepTs) {
                     // The sheet logs a literal 'abandoned' step when the user
                     // NEXT opens the app — hours later. The synthetic red line
@@ -1956,10 +2383,10 @@
                     let steps = '';
                     entries.forEach(([step, ms]) => {
                         const off = ms - t0 === 0 ? 'start' : '+' + formatDuration(ms - t0);
-                        steps += `<div class="tl-step"><span class="tl-step-dot"></span>${stepLabels[step] || step}<span class="tl-step-ts">${off}</span></div>`;
+                        steps += `<div class="tl-step"><span class="tl-step-dot"></span>${esc(stepLabels[step] || step)}<span class="tl-step-ts">${off}</span></div>`;
                     });
                     if (!s.completed) {
-                        const exitLabel = s.abandonedAt ? ' at ' + (stepLabels[s.abandonedAt] || s.abandonedAt) : '';
+                        const exitLabel = s.abandonedAt ? ' at ' + esc(stepLabels[s.abandonedAt] || s.abandonedAt) : '';
                         steps += `<div class="tl-step"><span class="tl-step-dot" style="background:#ba6b6b"></span>Abandoned${exitLabel}<span class="tl-step-ts"></span></div>`;
                     }
                     detail += `<div class="tl-steps">${steps}</div>`;
@@ -1969,18 +2396,19 @@
                 if (s && durationStr !== '—') dRow('Duration', durationStr);
                 if (c) {
                     const type = c['cardType'];
-                    dRow('Card type', type ? `<span class="badge badge-${type}">${type}</span>` : null);
-                    dRow('Category', c['category']);
+                    dRow('Card type', type ? `<span class="badge badge-${esc(type)}">${esc(type)}</span>` : null);
+                    dRow('Category', c['category'] ? esc(c['category']) : null);
                     dRow('Die-cut', (c['isDieCut'] === true || c['isDieCut'] === 'TRUE') ? 'Yes' : null);
                     dRow('From filled in', (c['hasFromPerson'] === true || c['hasFromPerson'] === 'TRUE') ? 'Yes' : null);
-                    dRow('OS', c['osVersion']);
+                    dRow('OS', c['osVersion'] ? esc(c['osVersion']) : null);
                 }
-                dRow('Location', [country ? `${countryFlag(country)} ${countryName(country)}` : null, tzCity].filter(Boolean).join(' · '));
+                dRow('Location', [country ? `${countryFlag(country)} ${esc(countryName(country))}` : null, tzCity && esc(tzCity)].filter(Boolean).join(' · '));
                 const plan = (c && c['plan']) || (s && s.plan) || null;
-                dRow('Plan', plan ? (PLAN_LABELS[plan] || plan) : null);
-                dRow('Build', (c && c['appVersion']) || (s && s.appVersion));
-                dRow('Device', modelLabel + (modelCode && modelLabel !== modelCode ? ` <span style="color:#666">${modelCode}</span>` : ''));
-                dRow('Device ID', deviceId ? `<span title="${deviceId}">${deviceId.slice(0, 8)}…</span>` : null);
+                dRow('Plan', plan ? esc(PLAN_LABELS[plan] || plan) : null);
+                const build = (c && c['appVersion']) || (s && s.appVersion);
+                dRow('Build', build ? esc(build) : null);
+                dRow('Device', esc(modelLabel) + (modelCode && modelLabel !== modelCode ? ` <span style="color:#666">${esc(modelCode)}</span>` : ''));
+                dRow('Device ID', deviceId ? `<span title="${esc(deviceId)}">${esc(deviceId.slice(0, 8))}…</span>` : null);
                 if (!s && c) dRow('Note', 'Capture without a funnel session (older build)');
                 detail += dRows.join('');
                 const detailIdx = tlDetails.push(detail) - 1;
@@ -1991,9 +2419,9 @@
 
                 return `<tr class="${cls}"${styleAttr} onclick="showTlDetail(${detailIdx})">
                     <td data-label="Time">${time}${internalBadge}</td>
-                    <td data-label="Device">${flag}${modelLabel}</td>
+                    <td data-label="Device">${flag}${esc(modelLabel)}</td>
                     <td data-label="Outcome">${outcomeBadge}</td>
-                    <td data-label="Last step">${lastLabel}</td>
+                    <td data-label="Last step">${esc(lastLabel)}</td>
                     <td data-label="Duration">${durationStr}</td>
                 </tr>`;
             }
@@ -2039,7 +2467,7 @@
                 const clusterCountry = (sampleSession && sampleSession.country)
                     || (sampleCapture && sampleCapture['country']) || null;
                 const clusterFlag = clusterCountry ? countryFlag(clusterCountry) + ' ' : '';
-                const modelLabel = (modelCode ? deviceName(modelCode) : '—');
+                const modelLabel = (modelCode ? esc(deviceName(modelCode)) : '—');
                 const internalBadge = isInternal
                     ? ' <span class="badge" style="background:#1a1a2a;color:#6b8bba">INTERNAL</span>'
                     : (isReview ? ' <span class="badge" style="background:#2a201a;color:#ba9b6b">APP REVIEW</span>' : '');
@@ -2052,7 +2480,7 @@
                 if (abandonedInCluster) outcomeBits.push(`<span style="color:#ba6b6b">${abandonedInCluster} abandoned</span>`);
                 if (captureOnly) outcomeBits.push(`${captureOnly} capture${captureOnly === 1 ? '' : 's'}`);
                 const stepBit = dominantStep
-                    ? ` · mostly <em style="font-style:normal;color:#bbb">${stepLabels[dominantStep] || dominantStep}</em>`
+                    ? ` · mostly <em style="font-style:normal;color:#bbb">${esc(stepLabels[dominantStep] || dominantStep)}</em>`
                     : '';
 
                 const opacity = isInternal ? 'opacity:0.5;' : '';
@@ -2104,7 +2532,7 @@
 
                 legend += `<div class="legend-item">
                     <div class="legend-dot" style="background:${color}"></div>
-                    ${name}
+                    ${esc(name)}
                     <span class="legend-count">${count} (${Math.round(pct*100)}%)</span>
                 </div>`;
             });
@@ -2245,7 +2673,8 @@
         internalToggle.addEventListener('change', (e) => {
             showInternal = e.target.checked;
             localStorage.setItem('showInternal', String(showInternal));
-            if (cachedRows) renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary);
+            if (cachedRows) renderDashboard(cachedRows, cachedFunnelRows, cachedFunnelSummary,
+                                            cachedShareSummary, cachedShareRows);
         });
 
         // Load on start
