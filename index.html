@@ -749,7 +749,7 @@
                         country: null,
                         timezone: null,
                         plan: null,
-                        stepTs: {},
+                        stepTs: dict(),
                         abandonedAt: null
                     });
                 }
@@ -832,8 +832,8 @@
         // the funnel without refetching. Falls back gracefully if the sheet
         // has no header row or is missing expected columns.
         function summarizeFunnelClient(rows) {
-            const perStep = {};
-            const abandonedAt = {};
+            const perStep = dict();
+            const abandonedAt = dict();
             if (!rows || rows.length < 2) return { perStep, abandonedAt };
 
             const header = rows[0];
@@ -866,7 +866,7 @@
         // rows. The 'emptyStateShown' rows (logged with no sessionId when the
         // first-run empty state appears) anchor the denominator.
         function summarizeOnboardingDevices(rows) {
-            const stepDevices = {};
+            const stepDevices = dict();
             if (!rows || rows.length < 2) return stepDevices;
             const header = rows[0];
             const stepCol = header.indexOf('step');
@@ -888,7 +888,7 @@
         // step: total row count, distinct devices, and distinct devices in
         // the trailing 7 days (timestamps are server-side arrival times).
         function summarizeUsage(rows) {
-            const out = {};
+            const out = dict();
             if (!rows || rows.length < 2) return out;
             const header = rows[0];
             const stepCol = header.indexOf('step');
@@ -989,7 +989,7 @@
             // Deletions per device (`cardDeleted`, build 459+). The app's cap
             // counts the LIVE library, so a capture total alone drifts high
             // for anyone who prunes. Subtracting these tracks the real thing.
-            const deletions = {};
+            const deletions = dict();
             if (funnelRows && funnelRows.length > 1) {
                 const fh = funnelRows[0];
                 const fs = fh.indexOf('step'), fd = fh.indexOf('deviceId');
@@ -1003,7 +1003,7 @@
                 }
             }
 
-            const stats = {};
+            const stats = dict();
             for (let i = 1; i < rows.length; i++) {
                 const id = rows[i][dI];
                 if (!id || !deviceInfo[id]) continue;   // respects the internal/review filter
@@ -1135,20 +1135,30 @@
         /// it outright, so this list never needs to grow.
         const APP_STORE_BUILDS = new Set([643, 647]);
 
-        const PAYWALL_DOORS = {
+        const PAYWALL_DOORS = dict({
             limit: 'Hit the card limit',
             badge: '“Free left” badge',
             widget: 'Locked widget',
             importFull: 'Import, plan full',
             moments: 'Creating a moment',
             unknown: 'Older build (no door)'
-        };
+        });
         const PAYWALL_TIERS = ['tier20', 'tier100', 'unlimited'];
         const PAYWALL_STEPS = new Set([
             'paywallShown', 'paywallOpened', 'paywallTierViewed', 'purchaseStarted',
             'purchaseCancelled', 'purchasePending', 'purchaseFailed',
             'purchaseArrived', 'refunded', 'restoreResult'
         ]);
+
+        /// A map with no built-in keys, for anything keyed by values from the
+        /// sheet. On a plain `{}`, a row whose step or device id is
+        /// `constructor`, `toString` or `__proto__` finds an inherited
+        /// property instead of an empty slot, and the next `.add()` /
+        /// `.push()` on it throws, blanking the whole dashboard. Anyone can
+        /// write rows, so that was one POST away. `init` seeds fixed entries.
+        function dict(init) {
+            return Object.assign(Object.create(null), init || {});
+        }
 
         /// Text from the sheet goes into innerHTML, and the write endpoint is
         /// open to anyone — escape whatever didn't come from this file.
@@ -1161,11 +1171,11 @@
             const mk = () => ({
                 opened: new Set(), viewed: new Set(), started: new Set(), bought: new Set(),
                 cancelled: new Set(), refunded: new Set(), arrived: new Set(),
-                byTier: Object.fromEntries(PAYWALL_TIERS.map(t => [t,
-                    { viewed: new Set(), started: new Set(), bought: new Set(), cancelled: new Set() }])),
-                doorOpened: {}, doorBought: {}
+                byTier: dict(Object.fromEntries(PAYWALL_TIERS.map(t => [t,
+                    { viewed: new Set(), started: new Set(), bought: new Set(), cancelled: new Set() }]))),
+                doorOpened: dict(), doorBought: dict()
             });
-            const out = { devices: {}, agg: { appstore: mk(), test: mk() }, hasDetail: false };
+            const out = { devices: dict(), agg: { appstore: mk(), test: mk() }, hasDetail: false };
             if (!funnelRows || funnelRows.length < 2) return out;
             const h = funnelRows[0];
             const sI = h.indexOf('step'), dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'),
@@ -1192,7 +1202,7 @@
                 return testerByBuild.has(id) ? 'test' : 'appstore';
             };
 
-            const visits = {};      // visit id → { door, env }
+            const visits = dict();  // visit id → { door, env }
             const purchases = [];   // for door attribution once every visit is known
             for (let i = 1; i < funnelRows.length; i++) {
                 const r = funnelRows[i];
@@ -1208,7 +1218,7 @@
                 const sid = sidI >= 0 ? String(r[sidI] || '') : '';
                 const detail = detI >= 0 ? String(r[detI] || '') : '';
                 const d = out.devices[id] || (out.devices[id] = {
-                    id, envs: new Set(), opens: 0, legacyDays: 0, doors: {},
+                    id, envs: new Set(), opens: 0, legacyDays: 0, doors: dict(),
                     viewed: new Set(), started: new Set(), bought: [], cancelled: new Set(),
                     pending: new Set(), failed: new Set(), arrived: [], refunded: [],
                     restored: null, first: null, last: null
@@ -1404,11 +1414,11 @@
         // Plan (tier) display metadata. `plan` arrives on every event from
         // build 461+ — free / tier20 / tier100 / unlimited.
         const PLAN_ORDER = ['free', 'tier20', 'tier100', 'unlimited'];
-        const PLAN_LABELS = { free: 'Free', tier20: 'Up to 20', tier100: 'Up to 100', unlimited: 'Unlimited' };
-        const PLAN_COLORS = { free: '#8a8a8a', tier20: '#6b8bba', tier100: '#6bba6b', unlimited: '#ED9B61' };
+        const PLAN_LABELS = dict({ free: 'Free', tier20: 'Up to 20', tier100: 'Up to 100', unlimited: 'Unlimited' });
+        const PLAN_COLORS = dict({ free: '#8a8a8a', tier20: '#6b8bba', tier100: '#6bba6b', unlimited: '#ED9B61' });
         /// Card capacity per plan — mirrors ScanLimitService.defaultFreeScanLimit
         /// and UnlockTier.cardLimit in the app. Keep in sync if those change.
-        const PLAN_CAPS = { free: 5, tier20: 20, tier100: 100, unlimited: null };
+        const PLAN_CAPS = dict({ free: 5, tier20: 20, tier100: 100, unlimited: null });
 
         // The scan flow has been rebuilt twice, and each rebuild changed what
         // the steps MEAN. Mixing eras produced a phantom 41% cliff at a step
@@ -1445,7 +1455,7 @@
                 const dI = rows[0].indexOf('deviceId');
                 for (let i = 1; i < rows.length; i++) saved.add(rows[i][dI]);
             }
-            const profile = {};
+            const profile = dict();
             if (funnelRows && funnelRows.length > 1) {
                 const h = funnelRows[0];
                 const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'),
@@ -1495,7 +1505,7 @@
             REVIEW_DEVICES = computeReviewDevices(rows, funnelRows);
             const headers = rows[0];
             const allData = rows.slice(1).map(row => {
-                const obj = {};
+                const obj = dict();
                 headers.forEach((h, i) => obj[h] = row[i]);
                 return obj;
             });
@@ -1530,21 +1540,21 @@
             const withFrom = data.filter(d => d['hasFromPerson'] === true || d['hasFromPerson'] === 'TRUE').length;
 
             // Card types
-            const types = {};
+            const types = dict();
             data.forEach(d => {
                 const t = d['cardType'] || 'unknown';
                 types[t] = (types[t] || 0) + 1;
             });
 
             // Categories
-            const categories = {};
+            const categories = dict();
             data.forEach(d => {
                 const c = d['category'] || 'Uncategorized';
                 if (c) categories[c] = (categories[c] || 0) + 1;
             });
 
             // Timeline (by day)
-            const byDay = {};
+            const byDay = dict();
             data.forEach(d => {
                 const ts = d['timestamp'];
                 // Apps Script serializes Date cells as ISO strings, but sheets
@@ -1564,7 +1574,7 @@
             // but never saved. One entry per deviceId so a prolific tester
             // counts once, and funnel rows get the internal filter that
             // capture rows already had.
-            const deviceInfo = {};
+            const deviceInfo = dict();
             const noteDevice = (id, model, country, tz, plan, ts) => {
                 if (!id) return;
                 if (!showInternal && isFilteredDevice(id)) return;
@@ -1593,17 +1603,17 @@
             }
 
             // Device models — one vote per device, not per capture
-            const models = {};
+            const models = dict();
             Object.values(deviceInfo).forEach(e => {
                 const m = e.model || 'unknown';
                 models[m] = (models[m] || 0) + 1;
             });
 
-            const typeColors = {
+            const typeColors = dict({
                 vertical: '#6bba6b',
                 horizontal: '#6b8bba',
                 postcard: '#ba6bba'
-            };
+            });
 
             const catColors = ['#ED9B61', '#6bba6b', '#6b8bba', '#ba6bba', '#ba6b6b', '#6bbaba', '#baba6b', '#9b6bba'];
 
@@ -1668,7 +1678,7 @@
             // FunnelSteps rows only carry deviceId, not deviceModel — build
             // a deviceId → most-recent-model map from the Captures sheet as
             // a fallback for older sessions.
-            const deviceModels = {};
+            const deviceModels = dict();
             allData.forEach(d => {
                 const id = d['deviceId'];
                 const model = d['deviceModel'];
@@ -1706,7 +1716,7 @@
             html += '<div class="chart-card">';
             html += '<h3>Device Models <span style="color:#555;font-weight:400;font-size:13px">· distinct devices</span></h3>';
             // Map internal model IDs to friendly names and merge duplicates
-            const friendlyModels = {};
+            const friendlyModels = dict();
             Object.entries(models).forEach(([model, count]) => {
                 const name = deviceName(model);
                 friendlyModels[name] = (friendlyModels[name] || 0) + count;
@@ -1730,8 +1740,8 @@
             // deviceInfo union above (captures + funnel), so devices that
             // never saved a card still show up and heavy testers count once.
             // Only renders if at least one device carries either field.
-            const countries = {};
-            const timezones = {};
+            const countries = dict();
+            const timezones = dict();
             Object.values(deviceInfo).forEach(e => {
                 if (e.country) countries[e.country] = (countries[e.country] || 0) + 1;
                 if (e.tz) timezones[e.tz] = (timezones[e.tz] || 0) + 1;
@@ -1783,7 +1793,7 @@
             // Plans — distinct devices by the LAST plan we saw them on.
             // Forward-only: fills in as builds that log `plan` (461+) ship;
             // devices on older builds simply don't appear here.
-            const planCounts = {};
+            const planCounts = dict();
             Object.values(deviceInfo).forEach(e => {
                 if (e.plan) planCounts[e.plan] = (planCounts[e.plan] || 0) + 1;
             });
@@ -1950,12 +1960,12 @@
 
             // Rows written before shareId existed carry a blank one. They're
             // shown as unpairable rather than dropped or guessed at.
-            const byId = {};
+            const byId = dict();
             imports.forEach(r => {
                 const id = iShare >= 0 ? String(r[iShare] || '') : '';
                 if (id) (byId[id] = byId[id] || []).push(r);
             });
-            const pairedIds = {};
+            const pairedIds = dict();
 
             html += '<div class="table-card"><h3>Hand-offs'
                  + '<span style="color:#555;font-weight:400;font-size:13px">'
@@ -2231,7 +2241,7 @@
 
             // Index captures by sessionId for fast lookup. Track which ones
             // we matched to a session so we can list orphans afterward.
-            const captureBySession = {};
+            const captureBySession = dict();
             const captureTs = captureRows.map(c => {
                 const ts = c['timestamp'];
                 return ts ? (ts instanceof Date ? ts.getTime() : new Date(ts).getTime()) : NaN;
@@ -2547,7 +2557,7 @@
             </div>`;
         }
 
-        const DEVICE_NAMES = {
+        const DEVICE_NAMES = dict({
             // iPhone
             'iPhone8,1': 'iPhone 6s', 'iPhone8,2': 'iPhone 6s Plus', 'iPhone8,4': 'iPhone SE',
             'iPhone9,1': 'iPhone 7', 'iPhone9,3': 'iPhone 7', 'iPhone9,2': 'iPhone 7 Plus', 'iPhone9,4': 'iPhone 7 Plus',
@@ -2587,7 +2597,7 @@
             'iPad16,3': 'iPad Pro 11" (M4)', 'iPad16,4': 'iPad Pro 11" (M4)', 'iPad16,5': 'iPad Pro 13" (M4)', 'iPad16,6': 'iPad Pro 13" (M4)',
             // Mac (for Catalyst / Designed for iPad)
             'arm64': 'Mac (Apple Silicon)',
-        };
+        });
 
         function deviceName(model) {
             return DEVICE_NAMES[model] || model;
@@ -2607,7 +2617,7 @@
 
         // ISO 3166 alpha-2 → display name via Intl. Falls back to the raw
         // code if the browser doesn't have it (very rare).
-        const _countryNameCache = {};
+        const _countryNameCache = dict();
         const _displayNames = (typeof Intl !== 'undefined' && Intl.DisplayNames)
             ? new Intl.DisplayNames(['en'], { type: 'region' })
             : null;
