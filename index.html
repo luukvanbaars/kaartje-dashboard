@@ -1478,6 +1478,111 @@
             return html;
         }
 
+        // ---- New devices ---------------------------------------------------
+        // First opens per day: the closest the analytics get to downloads.
+        // The device id lives in the Keychain and survives a reinstall, so
+        // the first day a device shows up in ANY sheet is when that person
+        // started — a reinstall isn't counted twice. Someone who downloads
+        // and never opens the app isn't here at all; App Store Connect's
+        // First-Time Downloads has that number.
+
+        /// 1.0 went on sale on 16 Oct 2026. A device first seen before that
+        /// was a TestFlight tester, whatever its rows say.
+        const APP_STORE_LAUNCH_MS = new Date('2026-10-16T00:00:00').getTime();
+
+        /// Local calendar day, YYYY-MM-DD.
+        function localDay(ms) {
+            const d = new Date(ms);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        function summarizeNewDevices(captureRows, funnelRows, shareRows) {
+            const devices = dict();   // id → { first, envs:Set, testerBuild }
+            const scan = rows => {
+                if (!rows || rows.length < 2) return;
+                const h = rows[0];
+                const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'),
+                      eI = h.indexOf('env'), vI = h.indexOf('appVersion');
+                if (dI < 0 || tI < 0) return;
+                for (let i = 1; i < rows.length; i++) {
+                    const r = rows[i], id = r[dI];
+                    if (!id || (!showInternal && isFilteredDevice(id))) continue;
+                    const ts = r[tI];
+                    const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                    if (Number.isNaN(ms)) continue;
+                    const d = devices[id] || (devices[id] = { first: ms, envs: new Set(), testerBuild: false });
+                    if (ms < d.first) d.first = ms;
+                    const e = eI >= 0 ? r[eI] : '';
+                    if (e) d.envs.add(e);
+                    const b = vI >= 0 ? buildNumber(r[vI]) : null;
+                    if (b !== null && !APP_STORE_BUILDS.has(b)) d.testerBuild = true;
+                }
+            };
+            scan(captureRows); scan(funnelRows); scan(shareRows);
+
+            const out = { byDay: dict(), appstore: [], test: [] };
+            Object.values(devices).forEach(d => {
+                const kind = d.first < APP_STORE_LAUNCH_MS ? 'test'
+                    : d.envs.has('appstore') ? 'appstore'
+                    : (d.envs.has('testflight') || d.envs.has('debug')) ? 'test'
+                    : d.testerBuild ? 'test' : 'appstore';
+                out[kind].push(d.first);
+                const day = localDay(d.first);
+                const e = out.byDay[day] || (out.byDay[day] = { appstore: 0, test: 0 });
+                e[kind]++;
+            });
+            return out;
+        }
+
+        function renderNewDevices(nd) {
+            if (!nd.appstore.length && !nd.test.length) return '';
+            const DAY = 86400000, now = Date.now();
+            const since = days => nd.appstore.filter(ms => ms >= now - days * DAY).length;
+            const today = localDay(now);
+            const todayCount = (nd.byDay[today] || { appstore: 0 }).appstore;
+            const AS = '#ED9B61', TF = '#6b8bba';
+
+            let html = '<div class="chart-card" style="margin-bottom:24px">';
+            html += '<h3>New devices<span style="color:#555;font-weight:400"> · first opens per day — the closest thing to downloads</span></h3>';
+            html += '<div class="stats-grid">';
+            html += statCard('Today', todayCount, 'new App Store devices');
+            html += statCard('Last 7 days', since(7), 'new App Store devices');
+            html += statCard('Last 30 days', since(30), 'new App Store devices');
+            html += statCard('Since launch', nd.appstore.length, `+ ${nd.test.length} TestFlight testers in all`);
+            html += '</div>';
+
+            // Last 30 days, oldest left; App Store at the base, TestFlight on top.
+            const days = [];
+            for (let k = 29; k >= 0; k--) days.push(localDay(now - k * DAY));
+            const max = Math.max(1, ...days.map(d => { const e = nd.byDay[d]; return e ? e.appstore + e.test : 0; }));
+            html += `<div style="display:flex;gap:16px;margin:18px 0 6px;font-size:12px;color:#999">
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:${AS}"></span>App Store</span>
+                <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:${TF}"></span>TestFlight &amp; Debug</span>
+            </div>`;
+            html += '<div class="timeline-chart" style="gap:3px">';
+            days.forEach((day, k) => {
+                const e = nd.byDay[day] || { appstore: 0, test: 0 };
+                const a = e.appstore / max * 100, t = e.test / max * 100;
+                const [, mo, dd] = day.split('-');
+                const label = (k % 5 === 4 || k === days.length - 1) ? `${mo}-${dd}` : '';
+                const tip = `${day}: ${e.appstore} App Store, ${e.test} TestFlight`;
+                html += `<div class="timeline-bar-wrapper" title="${tip}">
+                    ${t ? `<div style="width:100%;max-width:32px;height:${t.toFixed(1)}%;background:${TF};border-radius:4px 4px 0 0;margin-bottom:${a ? 2 : 0}px"></div>` : ''}
+                    ${a ? `<div style="width:100%;max-width:32px;height:${a.toFixed(1)}%;background:${AS};border-radius:${t ? '0' : '4px 4px'} 0 0"></div>` : ''}
+                    ${!a && !t ? '<div style="width:100%;max-width:32px;height:2px;background:#222;border-radius:1px"></div>' : ''}
+                    <div class="timeline-label" style="height:12px;line-height:12px;white-space:nowrap">${label}</div>
+                </div>`;
+            });
+            html += '</div>';
+            html += `<div style="color:#666;font-size:12px;margin-top:12px;line-height:1.5">
+                A device counts on the first day it sends anything. A reinstall on the same device doesn't count again,
+                and someone who downloads but never opens the app isn't here — App Store Connect's First-Time Downloads has that.
+                Devices first seen before 16 Oct (launch) are TestFlight testers.
+            </div>`;
+            html += '</div>';
+            return html;
+        }
+
         // Plan (tier) display metadata. `plan` arrives on every event from
         // build 461+ — free / tier20 / tier100 / unlimited.
         const PLAN_ORDER = ['free', 'tier20', 'tier100', 'unlimited'];
@@ -1697,6 +1802,9 @@
             html += statCard('Die-Cut', dieCuts, `${total ? Math.round(dieCuts/total*100) : 0}% of total`);
             html += statCard('With Sender', withFrom, `${total ? Math.round(withFrom/total*100) : 0}% tagged`);
             html += '</div>';
+
+            // New devices per day — first opens, App Store vs TestFlight.
+            html += renderNewDevices(summarizeNewDevices(rows, funnelRows, shareRows));
 
             // Onboarding (activation) funnel — device-level, from the first-run
             // empty state through to a first saved card. The headline question,
