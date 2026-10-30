@@ -1862,8 +1862,18 @@
         // Deliberately NOT country-based alone: a real churned user in the
         // actual audience (e.g. Toronto, one visit, no save) must keep
         // counting in the funnel — drop-off measurement is the point.
+        // Apple's virtual iPhones (isAppleVirtual) count whatever they did.
         let REVIEW_DEVICES = new Set();
         function computeReviewDevices(rows, funnelRows) {
+            const set = new Set();
+            [rows, funnelRows].forEach(sheet => {
+                if (!sheet || sheet.length < 2) return;
+                const dI = sheet[0].indexOf('deviceId'), mI = sheet[0].indexOf('deviceModel');
+                if (mI < 0) return;
+                for (let i = 1; i < sheet.length; i++) {
+                    if (isAppleVirtual(sheet[i][mI])) set.add(sheet[i][dI]);
+                }
+            });
             const saved = new Set();
             if (rows && rows.length > 1) {
                 const dI = rows[0].indexOf('deviceId');
@@ -1883,7 +1893,6 @@
                     if (c === 'CN' || tz === 'Asia/Shanghai' || tz === 'America/Los_Angeles') p.reviewLocale = true;
                 }
             }
-            const set = new Set();
             Object.entries(profile).forEach(([id, p]) => {
                 if (p.reviewLocale && p.days.size <= 1) set.add(id);
             });
@@ -3042,7 +3051,15 @@
             'arm64': 'Mac (Apple Silicon)',
         });
 
+        // iPhone99,x is no phone for sale: Apple's own virtual iPhones
+        // (iPhone99,11 is the Private Cloud Compute research VM). Two
+        // iPhone99,7s, US, used Kaartje on 22 Oct 2026 and never again.
+        function isAppleVirtual(model) {
+            return /^iPhone99,/.test(String(model || ''));
+        }
+
         function deviceName(model) {
+            if (isAppleVirtual(model)) return 'Apple virtual iPhone';
             return DEVICE_NAMES[model] || model;
         }
 
