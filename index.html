@@ -1496,6 +1496,42 @@
             return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         }
 
+        /// App Store customer or tester? One rule for every view that sorts
+        /// devices: first seen before launch → tester; after that, the env
+        /// its rows carry (b650+), and before that whether it ever ran a
+        /// build the App Store didn't ship.
+        function deviceKind(d) {
+            return d.first < APP_STORE_LAUNCH_MS ? 'test'
+                : d.envs.has('appstore') ? 'appstore'
+                : (d.envs.has('testflight') || d.envs.has('debug')) ? 'test'
+                : d.testerBuild ? 'test' : 'appstore';
+        }
+
+        /// Thirty days of stacked bars, oldest left: `base` at the bottom,
+        /// `top` above it after a 2px gap. Entries: { day, base, top, tip }.
+        function stackedDayBars(entries, baseColor, topColor) {
+            const max = Math.max(1, ...entries.map(e => e.base + e.top));
+            let html = '<div class="timeline-chart" style="gap:3px">';
+            entries.forEach((e, k) => {
+                const a = e.base / max * 100, t = e.top / max * 100;
+                const [, mo, dd] = e.day.split('-');
+                const label = (k % 5 === 4 || k === entries.length - 1) ? `${mo}-${dd}` : '';
+                html += `<div class="timeline-bar-wrapper" title="${e.tip}">
+                    ${t ? `<div style="width:100%;max-width:32px;height:${t.toFixed(1)}%;background:${topColor};border-radius:4px 4px 0 0;margin-bottom:${a ? 2 : 0}px"></div>` : ''}
+                    ${a ? `<div style="width:100%;max-width:32px;height:${a.toFixed(1)}%;background:${baseColor};border-radius:${t ? '0' : '4px 4px'} 0 0"></div>` : ''}
+                    ${!a && !t ? '<div style="width:100%;max-width:32px;height:2px;background:#222;border-radius:1px"></div>' : ''}
+                    <div class="timeline-label" style="height:12px;line-height:12px;white-space:nowrap">${label}</div>
+                </div>`;
+            });
+            return html + '</div>';
+        }
+
+        /// The colour key above a stacked chart: [[colour, label], …].
+        function chartLegend(items) {
+            return `<div style="display:flex;gap:16px;margin:18px 0 6px;font-size:12px;color:#999">${items.map(([c, l]) =>
+                `<span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:${c}"></span>${l}</span>`).join('')}</div>`;
+        }
+
         function summarizeNewDevices(captureRows, funnelRows, shareRows) {
             const devices = dict();   // id → { first, envs:Set, testerBuild }
             const scan = rows => {
@@ -1522,10 +1558,7 @@
 
             const out = { byDay: dict(), appstore: [], test: [] };
             Object.values(devices).forEach(d => {
-                const kind = d.first < APP_STORE_LAUNCH_MS ? 'test'
-                    : d.envs.has('appstore') ? 'appstore'
-                    : (d.envs.has('testflight') || d.envs.has('debug')) ? 'test'
-                    : d.testerBuild ? 'test' : 'appstore';
+                const kind = deviceKind(d);
                 out[kind].push(d.first);
                 const day = localDay(d.first);
                 const e = out.byDay[day] || (out.byDay[day] = { appstore: 0, test: 0 });
@@ -1554,32 +1587,184 @@
             // Last 30 days, oldest left; App Store at the base, TestFlight on top.
             const days = [];
             for (let k = 29; k >= 0; k--) days.push(localDay(now - k * DAY));
-            const max = Math.max(1, ...days.map(d => { const e = nd.byDay[d]; return e ? e.appstore + e.test : 0; }));
-            html += `<div style="display:flex;gap:16px;margin:18px 0 6px;font-size:12px;color:#999">
-                <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:${AS}"></span>App Store</span>
-                <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:${TF}"></span>TestFlight &amp; Debug</span>
-            </div>`;
-            html += '<div class="timeline-chart" style="gap:3px">';
-            days.forEach((day, k) => {
+            html += chartLegend([[AS, 'App Store'], [TF, 'TestFlight &amp; Debug']]);
+            html += stackedDayBars(days.map(day => {
                 const e = nd.byDay[day] || { appstore: 0, test: 0 };
-                const a = e.appstore / max * 100, t = e.test / max * 100;
-                const [, mo, dd] = day.split('-');
-                const label = (k % 5 === 4 || k === days.length - 1) ? `${mo}-${dd}` : '';
-                const tip = `${day}: ${e.appstore} App Store, ${e.test} TestFlight`;
-                html += `<div class="timeline-bar-wrapper" title="${tip}">
-                    ${t ? `<div style="width:100%;max-width:32px;height:${t.toFixed(1)}%;background:${TF};border-radius:4px 4px 0 0;margin-bottom:${a ? 2 : 0}px"></div>` : ''}
-                    ${a ? `<div style="width:100%;max-width:32px;height:${a.toFixed(1)}%;background:${AS};border-radius:${t ? '0' : '4px 4px'} 0 0"></div>` : ''}
-                    ${!a && !t ? '<div style="width:100%;max-width:32px;height:2px;background:#222;border-radius:1px"></div>' : ''}
-                    <div class="timeline-label" style="height:12px;line-height:12px;white-space:nowrap">${label}</div>
-                </div>`;
-            });
-            html += '</div>';
+                return { day, base: e.appstore, top: e.test, tip: `${day}: ${e.appstore} App Store, ${e.test} TestFlight` };
+            }), AS, TF);
             html += `<div style="color:#666;font-size:12px;margin-top:12px;line-height:1.5">
                 A device counts on the first day it sends anything. A reinstall on the same device doesn't count again,
                 and someone who downloads but never opens the app isn't here — App Store Connect's First-Time Downloads has that.
                 Devices first seen before 16 Oct (launch) are TestFlight testers.
             </div>`;
             html += '</div>';
+            return html;
+        }
+
+        // ---- Usage ---------------------------------------------------------
+        // Who comes back, and what they do once their cards are in. A device
+        // is ACTIVE on a day it sent anything, from any sheet. The usage
+        // pulses (appOpened, cardOpened, detailsRevealed, searchUsed,
+        // cardEdited) are throttled app-side to one row per device per day,
+        // so everything here counts devices and days, never taps. appOpened
+        // fires on a cold launch only: a day someone just looks at the home
+        // screen of an app still in memory leaves no row at all.
+
+        const USAGE_ACTIVITIES = [
+            ['viewed',   'Opened a Kaartje'],
+            ['details',  'Pulled up details'],
+            ['saved',    'Saved a new Kaartje'],
+            ['searched', 'Searched'],
+            ['edited',   'Edited a Kaartje'],
+            ['shared',   'Shared a Kaartje'],
+        ];
+        const USAGE_STEPS = dict({ cardOpened: 'viewed', detailsRevealed: 'details', searchUsed: 'searched', cardEdited: 'edited' });
+
+        /// One entry per device: { id, first, last, kind, saved,
+        /// days: local day → Set of USAGE_ACTIVITIES keys done that day }.
+        function summarizeUsageDays(captureRows, funnelRows, shareRows) {
+            const devices = dict();
+            const scan = (rows, activityOf) => {
+                if (!rows || rows.length < 2) return;
+                const h = rows[0];
+                const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'),
+                      eI = h.indexOf('env'), vI = h.indexOf('appVersion');
+                if (dI < 0 || tI < 0) return;
+                for (let i = 1; i < rows.length; i++) {
+                    const r = rows[i], id = r[dI];
+                    if (!id || (!showInternal && isFilteredDevice(id))) continue;
+                    const ts = r[tI];
+                    const ms = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+                    if (Number.isNaN(ms)) continue;
+                    const d = devices[id] || (devices[id] = { id, first: ms, last: ms, envs: new Set(), testerBuild: false, days: dict(), saved: 0 });
+                    if (ms < d.first) d.first = ms;
+                    if (ms > d.last) d.last = ms;
+                    const e = eI >= 0 ? r[eI] : '';
+                    if (e) d.envs.add(e);
+                    const b = vI >= 0 ? buildNumber(r[vI]) : null;
+                    if (b !== null && !APP_STORE_BUILDS.has(b)) d.testerBuild = true;
+                    const day = localDay(ms);
+                    const acts = d.days[day] || (d.days[day] = new Set());
+                    const a = activityOf(r);
+                    if (a) acts.add(a);
+                    if (a === 'saved') d.saved++;
+                }
+            };
+            scan(captureRows, () => 'saved');
+            const sI = funnelRows && funnelRows.length ? funnelRows[0].indexOf('step') : -1;
+            scan(funnelRows, r => sI >= 0 ? USAGE_STEPS[r[sI]] : null);
+            const aI = shareRows && shareRows.length ? shareRows[0].indexOf('action') : -1;
+            scan(shareRows, r => aI >= 0 && r[aI] === 'shared' ? 'shared' : null);
+            return Object.values(devices).map(d => Object.assign(d, { kind: deviceKind(d) }));
+        }
+
+        // The tab re-renders on its own when its App Store / TestFlight
+        // switch flips, from the last summary.
+        let usageEnv = localStorage.getItem('usageEnv') === 'test' ? 'test' : 'appstore';
+        let lastUsage = null, lastUsageDevices = null;
+        function setUsageEnv(env) {
+            usageEnv = env === 'test' ? 'test' : 'appstore';
+            localStorage.setItem('usageEnv', usageEnv);
+            const el = document.getElementById('tab-usage');
+            if (el && lastUsage) el.innerHTML = renderUsageTab(lastUsage, lastUsageDevices);
+        }
+
+        function renderUsageTab(all, deviceInfo) {
+            const env = usageEnv;
+            const DAY = 86400000, now = Date.now();
+            const today = localDay(now);
+            const pct = (n, d) => d ? `${Math.round(n / d * 100)}%` : '—';
+            const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+            const lastDays = n => { const out = []; for (let k = n - 1; k >= 0; k--) out.push(localDay(now - k * DAY)); return out; };
+
+            const pill = (key, label) => `<button onclick="setUsageEnv('${key}')" style="border:1px solid ${env === key ? '#ED9B61' : '#333'};background:${env === key ? '#2a1d14' : 'transparent'};color:${env === key ? '#ED9B61' : '#888'};border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer">${label}</button>`;
+            let html = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+                ${pill('appstore', 'App Store')}${pill('test', 'TestFlight &amp; Debug')}
+                <span style="color:#666;font-size:12px">A device counts as active on a day it sends anything.</span>
+            </div>`;
+
+            const devs = all.filter(d => d.kind === env);
+            if (!devs.length) {
+                return html + `<div class="chart-card"><h3>Active devices</h3><div style="color:#777;font-size:14px">
+                    No ${env === 'test' ? 'TestFlight or Debug' : 'App Store'} devices yet.</div></div>`;
+            }
+
+            const days30 = lastDays(30), week = lastDays(7);
+            const activeIn = days => devs.filter(d => days.some(day => d.days[day]));
+            const active30 = activeIn(days30);
+            const startedBefore = devs.filter(d => localDay(d.first) < today);
+            const cameBack = startedBefore.filter(d => Object.keys(d.days).length >= 2);
+
+            // Active devices: the headline numbers, then each day split into
+            // devices that started that day and devices coming back.
+            const RET = '#ED9B61', NEW = '#6b8bba';
+            html += '<div class="chart-card" style="margin-bottom:24px">';
+            html += '<h3>Active devices<span style="color:#555;font-weight:400"> · devices that used Kaartje, per day</span></h3>';
+            html += '<div class="stats-grid">';
+            html += statCard('Today', activeIn([today]).length, 'active devices');
+            html += statCard('Last 7 days', activeIn(week).length, 'active devices');
+            html += statCard('Last 30 days', active30.length, 'active devices');
+            html += statCard('Came back', pct(cameBack.length, startedBefore.length),
+                `${cameBack.length} of ${plural(startedBefore.length, 'device')} used it on a second day`);
+            html += '</div>';
+            html += chartLegend([[RET, 'Coming back'], [NEW, 'First day']]);
+            html += stackedDayBars(days30.map(day => {
+                let ret = 0, nu = 0;
+                devs.forEach(d => { if (d.days[day]) { if (localDay(d.first) === day) nu++; else ret++; } });
+                return { day, base: ret, top: nu, tip: `${day}: ${ret} coming back, ${nu} on their first day` };
+            }), RET, NEW);
+            html += '</div>';
+
+            // What they do: share of the month's active devices that did each
+            // thing on at least one day.
+            const didOn = (d, key) => days30.filter(day => d.days[day] && d.days[day].has(key)).length;
+            html += '<div class="chart-card" style="margin-bottom:24px">';
+            html += `<h3>What they do<span style="color:#555;font-weight:400"> · of the ${plural(active30.length, 'device')} active in the last 30 days</span></h3>`;
+            html += '<div class="bar-chart">';
+            USAGE_ACTIVITIES.forEach(([key, label]) => {
+                const n = active30.filter(d => didOn(d, key)).length;
+                const dayCount = active30.reduce((sum, d) => sum + didOn(d, key), 0);
+                const w = active30.length ? n / active30.length * 100 : 0;
+                html += `<div class="bar-row" title="${label}: ${plural(n, 'device')}, on ${plural(dayCount, 'day')} between them">
+                    <div class="bar-label" style="width:150px">${label}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${w.toFixed(1)}%;background:${RET}"></div></div>
+                    <div class="bar-count" style="width:150px">${n} <span style="color:#555">(${pct(n, active30.length)}) · ${plural(dayCount, 'day')}</span></div>
+                </div>`;
+            });
+            html += '</div>';
+            html += `<div style="color:#666;font-size:12px;margin-top:12px;line-height:1.5">
+                Days are added up over devices: two people opening Kaartjes on three days each is 6 days.
+                Each signal is sent at most once a day per device, so how many Kaartjes someone opened in a day, or for how long, isn't recorded.
+            </div>`;
+            html += '</div>';
+
+            // Every device, most recently active first.
+            const fmtDate = ms => new Date(ms).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+            const none = '<span style="color:#555">—</span>';
+            const rows = devs.slice().sort((x, y) => y.last - x.last);
+            html += '<div class="table-card" style="max-width:900px;margin:0 auto 32px">';
+            html += `<h3>Devices <span style="color:#555;font-weight:400;font-size:13px">· ${plural(rows.length, 'device')}, most recently active first</span></h3>`;
+            html += '<table><thead><tr><th>Device</th><th>Started</th><th>Days active</th><th>Opened Kaartjes</th><th>Saved</th><th>Plan now</th><th>Last active</th></tr></thead><tbody>';
+            rows.forEach(d => {
+                const info = deviceInfo[d.id] || {};
+                const flag = info.country ? countryFlag(info.country) + ' ' : '';
+                const model = info.model ? esc(deviceName(info.model)) : '—';
+                const dayKeys = Object.keys(d.days);
+                const viewDays = dayKeys.filter(k => d.days[k].has('viewed')).length;
+                const plan = info.plan
+                    ? `<span class="badge" style="background:#1c1c1c;color:${PLAN_COLORS[info.plan] || '#8a8a8a'}">${esc(PLAN_LABELS[info.plan] || info.plan)}</span>`
+                    : none;
+                html += `<tr>
+                    <td data-label="Device">${flag}${model}</td>
+                    <td data-label="Started">${fmtDate(d.first)}</td>
+                    <td data-label="Days active">${plural(dayKeys.length, 'day')}</td>
+                    <td data-label="Opened Kaartjes">${viewDays ? `on ${plural(viewDays, 'day')}` : none}</td>
+                    <td data-label="Saved">${d.saved || none}</td>
+                    <td data-label="Plan now">${plan}</td>
+                    <td data-label="Last active">${formatTime(new Date(d.last))}</td>
+                </tr>`;
+            });
+            html += '</tbody></table></div>';
             return html;
         }
 
@@ -1663,7 +1848,9 @@
             const tl = document.getElementById('tab-timeline');
             const sh = document.getElementById('tab-sharing');
             const pw = document.getElementById('tab-paywall');
+            const us = document.getElementById('tab-usage');
             if (ov) ov.style.display = name === 'overview' ? '' : 'none';
+            if (us) us.style.display = name === 'usage' ? '' : 'none';
             if (tl) tl.style.display = name === 'timeline' ? '' : 'none';
             if (sh) sh.style.display = name === 'sharing' ? '' : 'none';
             if (pw) pw.style.display = name === 'paywall' ? '' : 'none';
@@ -2009,8 +2196,11 @@
             // tab persists.
             lastPaywall = summarizePaywall(funnelRows, rows);
             lastPaywallDevices = deviceInfo;
+            lastUsage = summarizeUsageDays(rows, funnelRows, shareRows);
+            lastUsageDevices = deviceInfo;
             const tabBar = `<div class="tab-bar">
                 <button class="tab-btn" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+                <button class="tab-btn" data-tab="usage" onclick="switchTab('usage')">Usage</button>
                 <button class="tab-btn" data-tab="timeline" onclick="switchTab('timeline')">Capture timeline</button>
                 <button class="tab-btn" data-tab="sharing" onclick="switchTab('sharing')">Sharing</button>
                 <button class="tab-btn" data-tab="paywall" onclick="switchTab('paywall')">Paywall</button>
@@ -2018,6 +2208,7 @@
             document.getElementById('content').innerHTML =
                 tabBar
                 + `<div id="tab-overview">${html}</div>`
+                + `<div id="tab-usage" style="display:none">${renderUsageTab(lastUsage, deviceInfo)}</div>`
                 + `<div id="tab-timeline" style="display:none">${timelineHtml}</div>`
                 + `<div id="tab-sharing" style="display:none">${renderSharingTab(shareRows, shareSummary)}</div>`
                 + `<div id="tab-paywall" style="display:none">${renderPaywallTab(lastPaywall, deviceInfo)}</div>`;
