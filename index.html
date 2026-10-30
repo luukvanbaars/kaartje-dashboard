@@ -519,7 +519,7 @@
             <div class="header-controls">
                 <label class="toggle">
                     <input type="checkbox" id="internal-toggle">
-                    Show internal &amp; review
+                    Show testers &amp; review
                 </label>
                 <button class="refresh-btn" onclick="fetchData()">Refresh</button>
             </div>
@@ -1192,16 +1192,18 @@
             if (sI < 0 || dI < 0) return out;
             out.hasDetail = detI >= 0;
 
-            // Pre-650 rows: a device that ran any non-App-Store build is a tester.
+            // Pre-650 rows: a device that ran any non-App-Store build is a
+            // tester. Only env-less rows count: an App Store customer's b656
+            // isn't in APP_STORE_BUILDS, but its rows say `appstore`.
             const testerByBuild = new Set();
-            const noteBuild = (id, ver) => {
+            const noteBuild = (id, ver, env) => {
                 const b = buildNumber(ver);
-                if (id && b !== null && !APP_STORE_BUILDS.has(b)) testerByBuild.add(id);
+                if (id && !env && b !== null && !APP_STORE_BUILDS.has(b)) testerByBuild.add(id);
             };
-            if (vI >= 0) for (let i = 1; i < funnelRows.length; i++) noteBuild(funnelRows[i][dI], funnelRows[i][vI]);
+            if (vI >= 0) for (let i = 1; i < funnelRows.length; i++) noteBuild(funnelRows[i][dI], funnelRows[i][vI], envI >= 0 ? funnelRows[i][envI] : '');
             if (captureRows && captureRows.length > 1) {
-                const cd = captureRows[0].indexOf('deviceId'), cv = captureRows[0].indexOf('appVersion');
-                if (cd >= 0 && cv >= 0) for (let i = 1; i < captureRows.length; i++) noteBuild(captureRows[i][cd], captureRows[i][cv]);
+                const cd = captureRows[0].indexOf('deviceId'), cv = captureRows[0].indexOf('appVersion'), ce = captureRows[0].indexOf('env');
+                if (cd >= 0 && cv >= 0) for (let i = 1; i < captureRows.length; i++) noteBuild(captureRows[i][cd], captureRows[i][cv], ce >= 0 ? captureRows[i][ce] : '');
             }
             const rowEnv = (r, id) => {
                 const e = envI >= 0 ? r[envI] : '';
@@ -1303,7 +1305,8 @@
         }
 
         function renderPaywallTab(pw, deviceInfo) {
-            const env = paywallEnv;
+            // Testers are only in the data with the toggle on.
+            const env = showInternal ? paywallEnv : 'appstore';
             const pct = (n, d) => d ? `${(n / d * 100).toFixed(0)}%` : '—';
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             const tierName = t => esc(PLAN_LABELS[t] || t);
@@ -1313,7 +1316,7 @@
             // App Store / TestFlight switch.
             const pill = (key, label) => `<button onclick="setPaywallEnv('${key}')" style="border:1px solid ${env === key ? '#ED9B61' : '#333'};background:${env === key ? '#2a1d14' : 'transparent'};color:${env === key ? '#ED9B61' : '#888'};border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer">${label}</button>`;
             let html = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-                ${pill('appstore', 'App Store')}${pill('test', 'TestFlight &amp; Debug')}
+                ${showInternal ? pill('appstore', 'App Store') + pill('test', 'TestFlight &amp; Debug') : ''}
                 <span style="color:#666;font-size:12px">${env === 'test' ? 'Test purchases are free sandbox ones, not revenue.' : 'Real customers and real money.'}</span>
             </div>`;
 
@@ -1507,6 +1510,55 @@
                 : d.testerBuild ? 'test' : 'appstore';
         }
 
+        /// The three sheets without TestFlight & Debug rows. Per row, not per
+        /// device, so a tester who later installed from the App Store keeps
+        /// those rows. A row is a tester's when it came before launch, says
+        /// so in `env` (b650+), or, carrying no env, came from a device that
+        /// ran a build the App Store didn't ship on another env-less row.
+        function appStoreRowsOnly(captureRows, funnelRows, shareRows) {
+            const sheets = [captureRows, funnelRows, shareRows];
+            const testerByBuild = new Set();
+            sheets.forEach(rows => {
+                if (!rows || rows.length < 2) return;
+                const h = rows[0];
+                const dI = h.indexOf('deviceId'), vI = h.indexOf('appVersion'), eI = h.indexOf('env');
+                if (dI < 0 || vI < 0) return;
+                for (let i = 1; i < rows.length; i++) {
+                    if (eI >= 0 && rows[i][eI]) continue;
+                    const b = buildNumber(rows[i][vI]);
+                    if (b !== null && !APP_STORE_BUILDS.has(b)) testerByBuild.add(rows[i][dI]);
+                }
+            });
+            return sheets.map(rows => {
+                if (!rows || rows.length < 2) return rows;
+                const h = rows[0];
+                const dI = h.indexOf('deviceId'), tI = h.indexOf('timestamp'), eI = h.indexOf('env');
+                return [h, ...rows.slice(1).filter(r => {
+                    if (tI >= 0 && new Date(r[tI]).getTime() < APP_STORE_LAUNCH_MS) return false;
+                    const e = eI >= 0 ? r[eI] : '';
+                    return e ? e === 'appstore' : !testerByBuild.has(r[dI]);
+                })];
+            });
+        }
+
+        /// Sent and imported .kaartje files, as the Apps Script's
+        /// summarizeShares counts them, over rows already filtered.
+        function summarizeSharesClient(rows) {
+            const out = { sent: 0, imported: 0, sendingDevices: 0, importingDevices: 0 };
+            if (!rows || rows.length < 2) return out;
+            const aI = rows[0].indexOf('action'), dI = rows[0].indexOf('deviceId');
+            if (aI < 0) return out;
+            const senders = new Set(), importers = new Set();
+            for (let i = 1; i < rows.length; i++) {
+                const a = rows[i][aI], dev = dI >= 0 ? rows[i][dI] : '';
+                if (a === 'shared') { out.sent++; if (dev) senders.add(dev); }
+                else if (a === 'imported') { out.imported++; if (dev) importers.add(dev); }
+            }
+            out.sendingDevices = senders.size;
+            out.importingDevices = importers.size;
+            return out;
+        }
+
         /// Thirty days of stacked bars, oldest left: `base` at the bottom,
         /// `top` above it after a 2px gap. Entries: { day, base, top, tip }.
         function stackedDayBars(entries, baseColor, topColor) {
@@ -1581,13 +1633,16 @@
             html += statCard('Today', todayCount, 'new App Store devices');
             html += statCard('Last 7 days', since(7), 'new App Store devices');
             html += statCard('Last 30 days', since(30), 'new App Store devices');
-            html += statCard('Since launch', nd.appstore.length, `+ ${nd.test.length} TestFlight testers in all`);
+            html += statCard('Since launch', nd.appstore.length,
+                nd.test.length ? `+ ${nd.test.length} TestFlight testers in all` : 'new App Store devices');
             html += '</div>';
 
             // Last 30 days, oldest left; App Store at the base, TestFlight on top.
             const days = [];
             for (let k = 29; k >= 0; k--) days.push(localDay(now - k * DAY));
-            html += chartLegend([[AS, 'App Store'], [TF, 'TestFlight &amp; Debug']]);
+            // One series needs no key; testers come in with the toggle.
+            if (nd.test.length) html += chartLegend([[AS, 'App Store'], [TF, 'TestFlight &amp; Debug']]);
+            else html += '<div style="height:18px"></div>';
             html += stackedDayBars(days.map(day => {
                 const e = nd.byDay[day] || { appstore: 0, test: 0 };
                 return { day, base: e.appstore, top: e.test, tip: `${day}: ${e.appstore} App Store, ${e.test} TestFlight` };
@@ -1595,7 +1650,7 @@
             html += `<div style="color:#666;font-size:12px;margin-top:12px;line-height:1.5">
                 A device counts on the first day it sends anything. A reinstall on the same device doesn't count again,
                 and someone who downloads but never opens the app isn't here — App Store Connect's First-Time Downloads has that.
-                Devices first seen before 16 Oct (launch) are TestFlight testers.
+                ${nd.test.length ? 'Devices first seen before 16 Oct (launch) are TestFlight testers.' : 'TestFlight testers are left out; “Show testers &amp; review” brings them back.'}
             </div>`;
             html += '</div>';
             return html;
@@ -1606,9 +1661,10 @@
         // is ACTIVE on a day it sent anything, from any sheet. The usage
         // pulses (appOpened, cardOpened, detailsRevealed, searchUsed,
         // cardEdited) are throttled app-side to one row per device per day,
-        // so everything here counts devices and days, never taps. appOpened
-        // fires on a cold launch only: a day someone just looks at the home
-        // screen of an app still in memory leaves no row at all.
+        // so everything here counts devices and days, never taps. Up to
+        // build 658, appOpened fired on a cold launch only: a day someone
+        // just looked at the home screen of an app still in memory left no
+        // row. Later builds send it on every return to the screen.
 
         const USAGE_ACTIVITIES = [
             ['viewed',   'Opened a Kaartje'],
@@ -1670,7 +1726,8 @@
         }
 
         function renderUsageTab(all, deviceInfo) {
-            const env = usageEnv;
+            // Testers are only in the data with the toggle on.
+            const env = showInternal ? usageEnv : 'appstore';
             const DAY = 86400000, now = Date.now();
             const today = localDay(now);
             const pct = (n, d) => d ? `${Math.round(n / d * 100)}%` : '—';
@@ -1679,7 +1736,7 @@
 
             const pill = (key, label) => `<button onclick="setUsageEnv('${key}')" style="border:1px solid ${env === key ? '#ED9B61' : '#333'};background:${env === key ? '#2a1d14' : 'transparent'};color:${env === key ? '#ED9B61' : '#888'};border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer">${label}</button>`;
             let html = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-                ${pill('appstore', 'App Store')}${pill('test', 'TestFlight &amp; Debug')}
+                ${showInternal ? pill('appstore', 'App Store') + pill('test', 'TestFlight &amp; Debug') : ''}
                 <span style="color:#666;font-size:12px">A device counts as active on a day it sends anything.</span>
             </div>`;
 
@@ -1863,7 +1920,19 @@
         let showInternal = localStorage.getItem('showInternal') === 'true';
 
         function renderDashboard(rows, funnelRows, funnelSummary, shareSummary, shareRows) {
+            // The dashboard is about App Store customers: TestFlight & Debug
+            // rows only show with the toggle on.
+            if (!showInternal) [rows, funnelRows, shareRows] = appStoreRowsOnly(rows, funnelRows, shareRows);
             REVIEW_DEVICES = computeReviewDevices(rows, funnelRows);
+            // Shares are counted here rather than by the Apps Script, so they
+            // leave out the same devices as everything else.
+            if (shareRows && shareRows.length) {
+                if (!showInternal) {
+                    const dI = shareRows[0].indexOf('deviceId');
+                    shareRows = [shareRows[0], ...shareRows.slice(1).filter(r => !isFilteredDevice(r[dI]))];
+                }
+                shareSummary = summarizeSharesClient(shareRows);
+            }
             const headers = rows[0];
             const allData = rows.slice(1).map(row => {
                 const obj = dict();
