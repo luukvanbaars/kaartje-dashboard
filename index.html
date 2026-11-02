@@ -1455,7 +1455,9 @@
                     const model = info.model ? esc(deviceName(info.model)) : '—';
                     const doors = Object.entries(d.doors).sort((x, y) => y[1] - x[1])
                         .map(([k, n]) => esc(PAYWALL_DOORS[k] || k) + (n > 1 ? ` ×${n}` : '')).join(' · ');
-                    const where = doors || '<span style="color:#555">older build</span>';
+                    // No doors and no older-build days: it never saw the
+                    // paywall (a redeemed code, Family Sharing).
+                    const where = doors || `<span style="color:#555">${d.legacyDays ? 'older build' : '—'}</span>`;
                     // Older builds logged a once-a-day pulse, not each visit.
                     const days = n => `${n} day${n === 1 ? '' : 's'}`;
                     const visitsCell = !d.legacyDays ? String(d.opens)
@@ -1833,6 +1835,8 @@
         /// Card capacity per plan — mirrors ScanLimitService.defaultFreeScanLimit
         /// and UnlockTier.cardLimit in the app. Keep in sync if those change.
         const PLAN_CAPS = dict({ free: 5, tier20: 20, tier100: 100, unlimited: null });
+        /// Plans in order — tiers never stack, the highest owned is the plan.
+        const PLAN_RANK = dict({ free: 0, tier20: 1, tier100: 2, unlimited: 3 });
 
         // The scan flow has been rebuilt twice, and each rebuild changed what
         // the steps MEAN. Mixing eras produced a phantom 41% cliff at a step
@@ -2033,11 +2037,22 @@
                 const fh = funnelRows[0];
                 const dI = fh.indexOf('deviceId'), mI = fh.indexOf('deviceModel'),
                       cI = fh.indexOf('country'), tzI = fh.indexOf('timezone'),
-                      pI = fh.indexOf('plan'), tsI = fh.indexOf('timestamp');
+                      pI = fh.indexOf('plan'), tsI = fh.indexOf('timestamp'),
+                      sI = fh.indexOf('step'), detI = fh.indexOf('detail');
                 for (let i = 1; i < funnelRows.length; i++) {
                     const r = funnelRows[i];
+                    // A purchase row names the plan it brought. Before build
+                    // 665 the app logged `purchaseArrived` (a redeemed code,
+                    // Family Sharing, Ask to Buy) BEFORE updating its plan, so
+                    // that row's own `plan` still said the old one — and as a
+                    // device's latest row it won.
+                    let plan = pI >= 0 ? r[pI] : null;
+                    const step = sI >= 0 ? String(r[sI] || '') : '';
+                    const got = step === 'purchaseArrived' ? (detI >= 0 ? r[detI] : null)
+                              : step.startsWith('purchased_') ? step.slice('purchased_'.length) : null;
+                    if (got && PLAN_RANK[got] != null && !(PLAN_RANK[plan] >= PLAN_RANK[got])) plan = got;
                     noteDevice(r[dI], mI >= 0 ? r[mI] : null, cI >= 0 ? r[cI] : null, tzI >= 0 ? r[tzI] : null,
-                               pI >= 0 ? r[pI] : null, tsI >= 0 ? r[tsI] : null);
+                               plan, tsI >= 0 ? r[tsI] : null);
                 }
             }
 
